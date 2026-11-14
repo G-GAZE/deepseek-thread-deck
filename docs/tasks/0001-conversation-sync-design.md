@@ -139,6 +139,7 @@ export interface ConversationSync {
 
 - 用户可能同时开多个 DeepSeek 标签页，都会触发同步；不加锁会重复劳动并放大写冲突。
 - 锁记录放 `browser.storage.local` 的 `deck.sync.lock`：`{ owner, acquiredAt, expiresAt }`，TTL **60s**。
+- **TTL 需在 M1b 实测后校准**：若真实环境全量同步接近或超过 60s，需调大 TTL 或改为续约机制（见 §15 M1b 清单）。
 - 抢不到锁 → 返回 `err(SYNC_IN_PROGRESS)`（`retryable: true`），UI 提示「已有同步在进行中」。
 - 锁只在写库期间持有，**成功或失败都会释放**（`finally`），不会把用户锁死；页面崩溃留下的锁由 TTL 过期接管。
 - **已知局限**：`storage.local` 的「读-改-写」跨标签页不是原子的，存在极窄竞态；因此锁只作为「避免重复劳动」的优化，数据正确性由 sync 的幂等 upsert 兜底。后续可换用 Web Locks（`navigator.locks`），端口 `SyncLockPort` 不变。
@@ -171,9 +172,12 @@ export interface ConversationSync {
 | 条件 | 展示 |
 | --- | --- |
 | `ok === false` | 按错误码显示：「同步不可用」/「适配中」/「同步已关闭」/「已有同步在进行中」+ 重试入口 |
-| `ok && cancelled > 0` | 「同步已取消（已处理 `synced + failed.length` / `total - skipped`）」+ **继续**按钮 |
+| `ok && cancelled > 0` | 「同步已取消（已处理 `synced + failed.length` / `total - skipped`）」+ **「重新同步」**按钮 |
 | `ok && failed.length > 0` | 「同步完成（N 条失败）」+ 重试入口 |
 | `ok && failed.length === 0` | 「同步完成」 |
+
+> 按钮文案必须是「**重新同步**」（或「继续（将重新同步全部）」），**不能**写「继续」暗示续传：
+> P0 取消时游标不推进，点击实际是整轮重跑，靠幂等 upsert 去重。**P0 不做真续传。**
 
 **skipped 展示层转译（固化）**：
 
@@ -241,3 +245,13 @@ export interface ConversationSync {
 | 2026-11-14 | 补 §6 执行位置与多标签页互斥锁（`deck.sync.lock`，TTL 60s） |
 | 2026-11-14 | 补 §9 skipped 展示层转译与取消态文案 |
 | 2026-11-14 | 补 §10.1 同步耗时归因数据与「不可外推」结论 |
+
+## 15. M1b 真实环境验收清单（待执行）
+
+真实环境（Chrome + Edge 手动加载 `.output/chrome-mv3`）逐项打点，作为 0.1 发布 gate：
+
+1. **同步能力**：真实账号完成同步 → 检索 → 跳转；网络面板确认零外传请求。
+2. **同步时长观察 + 锁 TTL 校准**：记录一次真实全量同步耗时；**若接近或超过 60s，调大 `deck.sync.lock` 的 TTL 或改为续约机制**。
+3. **真实 IndexedDB 性能复测**：用与 `tests/bench/sync-attribution.bench.ts` 相同的计时点，在真实 IndexedDB 上量「全量 / 增量 / 搜索 P95」，与 fake-indexeddb 数据对比，**据此决定 P1 前是否需要调整事务粒度**（当前实现是「逐会话一个事务」）。
+4. **降级验证**：模拟选择器失效 → 显示「适配中」不崩溃；关闭 `readonlySyncEnabled` → 显示「同步已关闭」。
+5. **Chrome 专项**：Chrome 自动化侧载不可用，必须人工在 `chrome://extensions` 加载并复验同步主流程。
