@@ -5,6 +5,11 @@ import { chromium, expect, test } from '@playwright/test';
 
 // 只验证构建产物本身可被 Chrome 加载（M0 退出标准「可加载的空扩展」）。
 // 真正的「同步 → 搜索 → 跳转」主流程 e2e 在任务 0001 的阶段 8 补齐。
+//
+// 前置条件：
+//   1) pnpm build              —— 产出 .output/chrome-mv3
+//   2) pnpm exec playwright install chromium
+// 注意：Chrome 137+ 已移除 --load-extension 侧载，必须用 Playwright 自带 chromium。
 const extensionPath = path.join(process.cwd(), '.output', 'chrome-mv3');
 
 interface ManifestShape {
@@ -25,6 +30,10 @@ function readManifest(): ManifestShape {
 
 test.describe('扩展产物可加载', () => {
   test.skip(!existsSync(extensionPath), '未找到 .output/chrome-mv3，请先运行 pnpm build');
+  test.skip(
+    !existsSync(chromium.executablePath()),
+    '未安装 Playwright chromium，请先运行 pnpm exec playwright install chromium',
+  );
 
   test('Chrome MV3 产物可加载且权限最小化', async () => {
     const context = await chromium.launchPersistentContext('', {
