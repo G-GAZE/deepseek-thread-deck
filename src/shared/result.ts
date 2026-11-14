@@ -19,6 +19,7 @@ export type CoreErrorCode =
   | 'SYNC_DISABLED'
   | 'SYNC_CANCELLED'
   | 'SYNC_IN_PROGRESS'
+  | 'INDEX_IN_PROGRESS'
   | 'FLAG_STORAGE_FAILED'
   | 'NOT_FOUND'
   | 'UNKNOWN';

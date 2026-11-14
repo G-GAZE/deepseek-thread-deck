@@ -10,6 +10,7 @@ import {
   type MessageRecord,
   type ProjectRecord,
   type SearchIndexRecord,
+  type SearchIndexSnapshotRecord,
 } from './schema';
 
 /**
@@ -22,6 +23,7 @@ export class DeckDatabase extends Dexie {
   declare message: Table<MessageRecord, string>;
   declare fork: Table<ForkRecord, string>;
   declare searchIndex: Table<SearchIndexRecord, string>;
+  declare searchIndexSnapshot: Table<SearchIndexSnapshotRecord, string>;
 
   constructor(name: string = DB_NAME) {
     super(name);

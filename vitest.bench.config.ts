@@ -2,7 +2,10 @@ import { fileURLToPath, URL } from 'node:url';
 
 import { defineConfig } from 'vitest/config';
 
+import { resolvePackageVersion } from './scripts/minisearch-version';
+
 const srcDir = fileURLToPath(new URL('./src', import.meta.url));
+const minisearchVersion = resolvePackageVersion('minisearch');
 
 /**
  * 基准专用配置：与 `pnpm test` 完全隔离。
@@ -12,6 +15,9 @@ const srcDir = fileURLToPath(new URL('./src', import.meta.url));
  * 指标口径见 docs/tasks/0001-conversation-sync-design.md §10。
  */
 export default defineConfig({
+  define: {
+    __MINISEARCH_VERSION__: JSON.stringify(minisearchVersion),
+  },
   resolve: {
     alias: [
       { find: /^@\/(.*)$/, replacement: `${srcDir}/$1` },

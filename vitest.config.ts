@@ -2,11 +2,18 @@ import { fileURLToPath, URL } from 'node:url';
 
 import { defineConfig } from 'vitest/config';
 
+import { resolvePackageVersion } from './scripts/minisearch-version';
+
 const srcDir = fileURLToPath(new URL('./src', import.meta.url));
+// 与 wxt.config.ts 保持一致：构建期注入 minisearch 版本，不在运行时 import package.json。
+const minisearchVersion = resolvePackageVersion('minisearch');
 
 // 覆盖率口径：只统计 core + shared（AGENTS.md §6「核心逻辑覆盖率 > 70%」）。
 // UI 与 entrypoints 由 e2e 覆盖，不进入单元覆盖率分母。
 export default defineConfig({
+  define: {
+    __MINISEARCH_VERSION__: JSON.stringify(minisearchVersion),
+  },
   resolve: {
     alias: [
       { find: /^@\/(.*)$/, replacement: `${srcDir}/$1` },

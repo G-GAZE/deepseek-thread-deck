@@ -398,26 +398,20 @@ describe('降级与健壮性', () => {
     expect(result.data[0]?.convId).toBe('c1');
   });
 
-  it('陈旧的 searchIndex 行（会话已不存在）不会让搜索崩溃', async () => {
+  it('快照里的会话已被删除时，索引行不会让搜索崩溃（projectId 兜底空串）', async () => {
     const { db, index } = await setup([
-      { id: 'c1', title: '正常会话', messages: [{ remoteId: 'm1', content: '正文' }] },
+      { id: 'c1', title: '将被删除的会话', messages: [{ remoteId: 'm1', content: '孤儿关键词' }] },
     ]);
     await index.rebuild();
-    await db.searchIndex.add({
-      id: 'ghost:__conversation__',
-      convId: 'ghost',
-      messageId: '',
-      title: '幽灵索引行',
-      body: '',
-      tokens: ['幽灵'],
-    });
+    // 模拟：会话被删除但索引行与快照仍在（P0 无删除 UI，属数据损坏场景）
+    await db.conversation.delete('c1');
 
     const fresh = createSearchIndex({ db, flags: resolveFlags({}) });
-    const result = await fresh.search('幽灵索引行');
+    const result = await fresh.search('孤儿关键词');
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('unreachable');
-    expect(result.data[0]?.convId).toBe('ghost');
+    expect(result.data[0]?.convId).toBe('c1');
   });
 
   it('引擎里有文档但索引行已被删除时，跳过该命中而不是抛错', async () => {

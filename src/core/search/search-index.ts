@@ -1,9 +1,19 @@
 import MiniSearch from 'minisearch';
 
 import type { ConversationRecord, MessageRecord, SearchIndexRecord } from '@/core/db/schema';
-import { toSearchIndexKey } from '@/core/db/schema';
+import { DB_VERSION, toSearchIndexKey } from '@/core/db/schema';
 import { err, ok, toCoreError, type CoreResult } from '@/shared/result';
+import type { StorageLockPort } from '@/shared/storage-lock';
 
+import type { IndexProgressPhase } from './progress';
+import {
+  MINISEARCH_VERSION,
+  SNAPSHOT_ID,
+  TOKENIZER_VERSION,
+  createSnapshotStore,
+  validateSnapshot,
+  type SnapshotStore,
+} from './snapshot';
 import { createTokenizer, tokenizeText } from './tokenizer';
 import type {
   SearchDocument,
@@ -19,20 +29,30 @@ const DEFAULT_LIMIT = 20;
 const MAX_SNIPPET_LENGTH = 160;
 const SNIPPET_LEFT_CONTEXT = 40;
 const SNIPPET_RIGHT_CONTEXT = 80;
+/** 与 sync 分片一致：索引构建按 20 个会话一批。 */
+const BATCH_SIZE = 20;
+/** 进度写入的最小间隔，避免频繁写 storage；30s 内至少一次由批次推进保证。 */
+const PROGRESS_MIN_INTERVAL_MS = 1_000;
 
 /**
- * 本地全文检索（任务 0001 阶段 5）。
+ * 本地全文检索（任务 0001 阶段 5 + 任务 0002 阶段 5.5）。
  *
- * 边界：只从 `conversation` / `message` **读**，只向 `searchIndex` **写**；
- * 绝不修改 sync 拥有的表，两者只通过 DB 解耦。
+ * 边界：只从 `conversation` / `message` **读**，只向 `searchIndex` / `searchIndexSnapshot` **写**；
+ * 绝不修改 sync 拥有的表。
  *
- * 降级（AGENTS.md §7）：`fullTextSearchEnabled=false` 或引擎初始化失败 → 退回标题搜索。
+ * 持久化：启动优先 `loadJSON` 命中快照；失效（版本戳 / JSON 损坏 / 时间倒退）才重建。
+ * 快照只是缓存：任何失败都退回「重建 + 标题兜底」。
  */
 export function createSearchIndex(deps: SearchIndexDeps): SearchIndex {
+  const now = deps.now ?? ((): number => Date.now());
   const engineFactory = deps.engineFactory ?? (() => createMiniSearchEngine());
+  const engineLoader = deps.engineLoader ?? ((json: string) => loadMiniSearchEngine(json));
+  const snapshots: SnapshotStore = createSnapshotStore(deps.db);
+
   let engine: SearchEngine | null = null;
   let loaded = false;
   let degraded = false;
+  let lastProgressAt = 0;
 
   // convId → projectId。`searchIndex` 表按 schema 不存 projectId，
   // 因此这份映射在内存里维护，只用于检索时的项目过滤与文档字段。
@@ -76,57 +96,191 @@ export function createSearchIndex(deps: SearchIndexDeps): SearchIndex {
     }
   }
 
-  /** 引擎 + 文档就绪（必要时从 `searchIndex` 表加载，空表则按需重建）。 */
-  async function ensureReady(): Promise<CoreResult<SearchEngine | null>> {
-    const created = ensureEngine();
-    if (!created.ok) return created;
+  async function maxUpdatedAt(): Promise<number | null> {
+    const latest = await deps.db.conversation.orderBy('updatedAt').last();
+    return latest === undefined ? null : latest.updatedAt;
+  }
 
-    const current = created.data;
-    if (current === null) return ok(null);
-    if (loaded) return ok(current);
+  /** 引擎 + 文档就绪：优先快照，失效则重建。 */
+  async function ensureReady(): Promise<CoreResult<SearchEngine | null>> {
+    if (!isFullTextEnabled()) return ok(null);
+    if (loaded && engine !== null) return ok(engine);
+    if (degraded) return ok(null);
+
+    const restored = await tryRestoreFromSnapshot();
+    if (!restored.ok) return ok(null);
+    if (restored.data !== null) return restored;
+
+    const rebuilt = await rebuild();
+    if (!rebuilt.ok) return rebuilt;
+    return ok(engine);
+  }
+
+  /** 快照路径：校验 → loadJSON → 增量补齐。任一步失败都返回 ok(null) 让上层重建。 */
+  async function tryRestoreFromSnapshot(): Promise<CoreResult<SearchEngine | null>> {
+    const snapshot = await snapshots.read();
+    if (!snapshot.ok) return ok(null);
+
+    const record = snapshot.data;
+    if (record === undefined) return ok(null);
+
+    const validation = validateSnapshot(record, {
+      dbVersion: DB_VERSION,
+      minisearchVersion: MINISEARCH_VERSION,
+      tokenizerVersion: TOKENIZER_VERSION,
+      maxUpdatedAt: await maxUpdatedAt(),
+      now: now(),
+    });
+
+    if (!validation.usable) {
+      await snapshots.remove();
+      return ok(null);
+    }
+
+    const json = record.json;
+    const builtAt = record.builtAt;
+    // 内存：json / record 都是局部变量，loadJSON 返回后即出栈释放，
+    // 不在闭包里长期持有 16 MiB 的字符串（见设计说明 §7）。
+
+    let restored: SearchEngine;
+    try {
+      restored = engineLoader(json);
+    } catch {
+      await snapshots.remove();
+      return ok(null);
+    }
+
+    engine = restored;
+    loaded = true;
+    await refreshProjectIds();
+    await applyIncremental(builtAt);
+    return ok(engine);
+  }
+
+  /** 启动增量：只补 `updatedAt > builtAt` 的会话；失败则不推进快照。 */
+  async function applyIncremental(builtAt: number): Promise<void> {
+    if (engine === null) return;
 
     try {
-      let rows = await deps.db.searchIndex.toArray();
-      if (rows.length === 0) {
-        const rebuilt = await rebuild();
-        if (!rebuilt.ok) return rebuilt;
-        rows = await deps.db.searchIndex.toArray();
-      }
+      const changed = await deps.db.conversation.where('updatedAt').above(builtAt).primaryKeys();
+      if (changed.length === 0) return;
 
-      await refreshProjectIds();
-      current.addAll(rows.map(toDocument));
-      loaded = true;
-      return ok(current);
-    } catch (cause) {
-      return { ok: false, error: toCoreError(cause, 'DB_READ_FAILED', true) };
+      for (const key of changed) {
+        const applied = await upsertInternal(String(key));
+        if (!applied) return;
+      }
+      await writeSnapshot();
+    } catch {
+      // 增量失败不阻塞搜索：旧快照仍然可用，下次启动会重试。
     }
   }
 
-  async function rebuild(): Promise<CoreResult<void>> {
-    // 重建意味着丢弃旧引擎，确保不会残留已删除文档。
-    engine = null;
-    loaded = false;
-
-    const created = ensureEngine();
-    if (!created.ok) return created;
-    const current = created.data;
+  async function writeSnapshot(): Promise<void> {
+    if (engine === null) return;
 
     try {
-      const rows = await collectRows(deps);
-      await deps.db.transaction('rw', deps.db.searchIndex, async () => {
-        await deps.db.searchIndex.clear();
-        if (rows.length > 0) await deps.db.searchIndex.bulkPut(rows);
+      const json = engine.serialize();
+      const docCount = await deps.db.searchIndex.count();
+      await snapshots.write({
+        id: SNAPSHOT_ID,
+        json,
+        builtAt: now(),
+        docCount,
+        schemaVersion: DB_VERSION,
+        minisearchVersion: MINISEARCH_VERSION,
+        tokenizerVersion: TOKENIZER_VERSION,
       });
+    } catch {
+      // 快照写失败不影响业务：下次启动重建即可。
+    }
+  }
+
+  async function reportProgress(
+    phase: IndexProgressPhase,
+    processed: number,
+    total: number,
+    force = false,
+  ): Promise<void> {
+    if (deps.progress === undefined) return;
+
+    const timestamp = now();
+    const due =
+      force || processed >= total || timestamp - lastProgressAt >= PROGRESS_MIN_INTERVAL_MS;
+    if (!due) return;
+
+    lastProgressAt = timestamp;
+    // 每次写入都刷新 updatedAt；写入失败忽略，不阻塞构建。
+    await deps.progress.write({ phase, processed, total, updatedAt: timestamp });
+  }
+
+  async function rebuild(): Promise<CoreResult<void>> {
+    const gate = ensureEngine();
+    if (!gate.ok) return gate;
+    const current = gate.data;
+
+    const lock = await acquireRebuildLock();
+    if (!lock.ok) return lock;
+
+    try {
+      // 内存优化：先释放旧引擎引用，避免同时持有两份索引。
+      engine = null;
+      loaded = false;
+
+      const conversations = await deps.db.conversation.toArray();
+      const total = conversations.length;
+      await reportProgress('building', 0, total, true);
+
+      const messages = await deps.db.message.toArray();
+      const byConversation = groupMessages(messages);
+
+      const rows: SearchIndexRecord[] = [];
+      let processed = 0;
+      for (const batch of chunk(conversations, BATCH_SIZE)) {
+        for (const conversation of batch) {
+          rows.push(...buildRows(conversation, byConversation.get(conversation.id) ?? []));
+        }
+        processed += batch.length;
+        await reportProgress('building', processed, total);
+      }
+
+      await writeRows(deps, rows);
+      await refreshProjectIds();
 
       if (current !== null) {
-        await refreshProjectIds();
-        current.addAll(rows.map(toDocument));
+        const fresh = engineFactory();
+        fresh.addAll(rows.map(toDocument));
+        engine = fresh;
         loaded = true;
       }
+
+      await reportProgress('done', total, total, true);
+      await writeSnapshot();
       return ok(undefined);
     } catch (cause) {
       return { ok: false, error: toCoreError(cause, 'DB_WRITE_FAILED', true) };
+    } finally {
+      await lock.data.release();
     }
+  }
+
+  async function acquireRebuildLock(): Promise<CoreResult<RebuildLockHandle>> {
+    const lock: StorageLockPort | undefined = deps.lock;
+    if (lock === undefined) return ok({ release: async () => undefined });
+
+    const owner = globalThis.crypto.randomUUID();
+    const acquired = await lock.acquire(owner);
+    if (!acquired.ok) return acquired;
+    if (!acquired.data) {
+      return {
+        ok: false,
+        error: {
+          code: 'INDEX_IN_PROGRESS',
+          message: '索引正在其他标签页建立（deck.search.lock），请稍后重试',
+          retryable: true,
+        },
+      };
+    }
+    return ok({ release: async () => void (await lock.release(owner)) });
   }
 
   async function upsertConversation(convId: string): Promise<CoreResult<void>> {
@@ -134,30 +288,34 @@ export function createSearchIndex(deps: SearchIndexDeps): SearchIndex {
     if (!ready.ok) return ready;
 
     try {
-      const conversation = await deps.db.conversation.get(convId);
-      if (conversation === undefined) {
-        return err('NOT_FOUND', `会话不存在: ${convId}`);
-      }
-
-      const messages = await deps.db.message.where('convId').equals(convId).toArray();
-      const rows = buildRows(conversation, messages);
-      const oldIds = await deps.db.searchIndex.where('convId').equals(convId).primaryKeys();
-
-      await deps.db.transaction('rw', deps.db.searchIndex, async () => {
-        await deps.db.searchIndex.where('convId').equals(convId).delete();
-        if (rows.length > 0) await deps.db.searchIndex.bulkPut(rows);
-      });
-
-      const current = ready.data;
-      if (current !== null) {
-        projectIds.set(convId, conversation.projectId ?? '');
-        for (const id of oldIds) current.discard(String(id));
-        current.addAll(rows.map(toDocument));
-      }
+      const applied = await upsertInternal(convId);
+      if (!applied) return err('NOT_FOUND', `会话不存在: ${convId}`);
       return ok(undefined);
     } catch (cause) {
       return { ok: false, error: toCoreError(cause, 'DB_WRITE_FAILED', true) };
     }
+  }
+
+  /** 增量更新单个会话（不写快照，快照由 rebuild / 启动增量统一刷新）。 */
+  async function upsertInternal(convId: string): Promise<boolean> {
+    const conversation = await deps.db.conversation.get(convId);
+    if (conversation === undefined) return false;
+
+    const messages = await deps.db.message.where('convId').equals(convId).toArray();
+    const rows = buildRows(conversation, messages);
+    const oldIds = await deps.db.searchIndex.where('convId').equals(convId).primaryKeys();
+
+    await deps.db.transaction('rw', deps.db.searchIndex, async () => {
+      await deps.db.searchIndex.where('convId').equals(convId).delete();
+      if (rows.length > 0) await deps.db.searchIndex.bulkPut(rows);
+    });
+
+    if (engine !== null) {
+      projectIds.set(convId, conversation.projectId ?? '');
+      for (const id of oldIds) engine.discard(String(id));
+      engine.addAll(rows.map(toDocument));
+    }
+    return true;
   }
 
   async function removeConversation(convId: string): Promise<CoreResult<void>> {
@@ -186,7 +344,7 @@ export function createSearchIndex(deps: SearchIndexDeps): SearchIndex {
 
     const ready = await ensureReady();
     const current = ready.ok ? ready.data : null;
-    // 引擎不可用（flag 关闭或初始化失败）→ 退回标题搜索。
+    // 引擎不可用（flag 关闭 / 初始化失败 / 别的标签页在建索引）→ 退回标题搜索。
     if (current === null) return titleSearch(deps, trimmed, options);
 
     try {
@@ -221,6 +379,31 @@ export function createSearchIndex(deps: SearchIndexDeps): SearchIndex {
   return { rebuild, upsertConversation, removeConversation, search };
 }
 
+async function writeRows(deps: SearchIndexDeps, rows: readonly SearchIndexRecord[]): Promise<void> {
+  await deps.db.transaction('rw', deps.db.searchIndex, async () => {
+    await deps.db.searchIndex.clear();
+    if (rows.length > 0) await deps.db.searchIndex.bulkPut(rows);
+  });
+}
+
+function groupMessages(messages: readonly MessageRecord[]): Map<string, MessageRecord[]> {
+  const byConversation = new Map<string, MessageRecord[]>();
+  for (const message of messages) {
+    const bucket = byConversation.get(message.convId);
+    if (bucket === undefined) byConversation.set(message.convId, [message]);
+    else bucket.push(message);
+  }
+  return byConversation;
+}
+
+function chunk<T>(items: readonly T[], size: number): T[][] {
+  const batches: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    batches.push(items.slice(index, index + size));
+  }
+  return batches;
+}
+
 /** 标题搜索：全文检索不可用时的降级路径（只在 conversation 表上做子串匹配）。 */
 async function titleSearch(
   deps: SearchIndexDeps,
@@ -251,24 +434,6 @@ async function titleSearch(
   }
 }
 
-async function collectRows(deps: SearchIndexDeps): Promise<SearchIndexRecord[]> {
-  const conversations = await deps.db.conversation.toArray();
-  const messages = await deps.db.message.toArray();
-
-  const byConversation = new Map<string, MessageRecord[]>();
-  for (const message of messages) {
-    const bucket = byConversation.get(message.convId);
-    if (bucket === undefined) byConversation.set(message.convId, [message]);
-    else bucket.push(message);
-  }
-
-  const rows: SearchIndexRecord[] = [];
-  for (const conversation of conversations) {
-    rows.push(...buildRows(conversation, byConversation.get(conversation.id) ?? []));
-  }
-  return rows;
-}
-
 /** 每条消息一行；0 消息会话补一行会话级文档，保证标题可检索。 */
 function buildRows(
   conversation: ConversationRecord,
@@ -282,7 +447,8 @@ function buildRows(
         messageId: '',
         title: conversation.title,
         body: '',
-        tokens: tokenizeText(conversation.title),
+        // v2：不再写真实分词结果（MiniSearch 内部自行分词，该字段无读取方）。
+        tokens: [],
       },
     ];
   }
@@ -298,7 +464,7 @@ function buildRows(
       messageId: message.id,
       title: conversation.title,
       body,
-      tokens: tokenizeText(`${conversation.title} ${body}`),
+      tokens: [],
     };
   });
 }
@@ -333,6 +499,10 @@ function truncate(text: string): string {
   return `${text.slice(0, MAX_SNIPPET_LENGTH - 1)}…`;
 }
 
+interface RebuildLockHandle {
+  release: () => Promise<void>;
+}
+
 interface MiniSearchResultLike {
   id: string | number;
   score: number;
@@ -342,19 +512,35 @@ interface MiniSearchResultLike {
   projectId?: unknown;
 }
 
-/** MiniSearch 适配层：把第三方库隔离在这里，业务代码只依赖 `SearchEngine` 端口。 */
-export function createMiniSearchEngine(
-  tokenize: (text: string) => string[] = createTokenizer(),
-): SearchEngine {
-  const mini = new MiniSearch<SearchDocument>({
+function miniSearchOptions(tokenize: (text: string) => string[]) {
+  return {
     fields: ['title', 'body'],
     storeFields: ['convId', 'messageId', 'title', 'projectId'],
     tokenize: (text: string) => tokenize(text),
     // combineWith: 'AND' —— 中文分词下要求所有词都命中，避免「旧关键词甲」把只共享
     // 「关键词」的无关文档也召回；标题加权 2 倍。
-    searchOptions: { boost: { title: 2 }, prefix: true, combineWith: 'AND' },
-  });
+    searchOptions: { boost: { title: 2 }, prefix: true, combineWith: 'AND' as const },
+  };
+}
 
+/** MiniSearch 适配层：把第三方库隔离在这里，业务代码只依赖 `SearchEngine` 端口。 */
+export function createMiniSearchEngine(
+  tokenize: (text: string) => string[] = createTokenizer(),
+): SearchEngine {
+  const mini = new MiniSearch<SearchDocument>(miniSearchOptions(tokenize));
+  return wrapEngine(mini);
+}
+
+/** 从快照 JSON 恢复引擎（阶段 5.5 启动快路径）。 */
+export function loadMiniSearchEngine(
+  json: string,
+  tokenize: (text: string) => string[] = createTokenizer(),
+): SearchEngine {
+  const mini = MiniSearch.loadJSON<SearchDocument>(json, miniSearchOptions(tokenize));
+  return wrapEngine(mini);
+}
+
+function wrapEngine(mini: MiniSearch<SearchDocument>): SearchEngine {
   return {
     addAll(docs) {
       for (const document of docs) {
@@ -365,6 +551,10 @@ export function createMiniSearchEngine(
 
     discard(id) {
       if (mini.has(id)) mini.discard(id);
+    },
+
+    serialize() {
+      return JSON.stringify(mini.toJSON());
     },
 
     search(query, options) {

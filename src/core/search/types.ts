@@ -1,6 +1,9 @@
 import type { DeckDatabase } from '@/core/db';
 import type { FeatureFlagSnapshot } from '@/shared/feature-flags';
 import type { CoreResult } from '@/shared/result';
+import type { StorageLockPort } from '@/shared/storage-lock';
+
+import type { IndexProgressPort } from './progress';
 
 /**
  * search-index 的对外契约（任务 0001 阶段 5）。
@@ -54,10 +57,19 @@ export interface SearchEngine {
     query: string,
     options: { limit: number; filter?: (doc: SearchDocument) => boolean },
   ): SearchOutcome[];
+  /** 序列化为快照 JSON（`MiniSearch.toJSON()` 的结果）。 */
+  serialize(): string;
 }
 
 export interface SearchIndexDeps {
   db: DeckDatabase;
   flags: FeatureFlagSnapshot;
   engineFactory?: () => SearchEngine;
+  /** 从快照 JSON 恢复引擎；缺省用 MiniSearch.loadJSON。 */
+  engineLoader?: (json: string) => SearchEngine;
+  /** rebuild 的互斥锁（`deck.search.lock`）。 */
+  lock?: StorageLockPort;
+  /** 首建进度上报；读写失败都不阻塞构建。 */
+  progress?: IndexProgressPort;
+  now?: () => number;
 }

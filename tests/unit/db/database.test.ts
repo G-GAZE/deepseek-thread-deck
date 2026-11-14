@@ -62,7 +62,7 @@ describe('openDeckDatabase()', () => {
     const db = await openTestDb();
 
     expect(db.tables.map((table) => table.name).sort()).toEqual(
-      ['conversation', 'fork', 'message', 'project', 'searchIndex'].sort(),
+      ['conversation', 'fork', 'message', 'project', 'searchIndex', 'searchIndexSnapshot'].sort(),
     );
     expect(db.verno).toBe(DB_VERSION);
   });

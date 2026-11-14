@@ -11,7 +11,7 @@
 export const DB_NAME = 'deepseek-thread-deck';
 
 /** 当前 schema 版本，必须等于 MIGRATIONS 中最大的 version。 */
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool';
 
@@ -78,7 +78,28 @@ export interface SearchIndexRecord {
   messageId: string;
   title: string;
   body: string;
+  /**
+   * v2 起不再写真实分词结果（MiniSearch 内部自行分词，该字段无读取方）：
+   * 统一写空数组，保留字段以兼容 v1 结构。见 docs/tasks/0002-search-index-persistence-design.md §8。
+   */
   tokens: string[];
+}
+
+/**
+ * 索引快照（v2 新增，单例）。
+ * 只是缓存：失效即重建，事实源仍是 conversation / message / searchIndex。
+ */
+export interface SearchIndexSnapshotRecord {
+  id: string;
+  /** MiniSearch.toJSON() 的 JSON 字符串。 */
+  json: string;
+  builtAt: number;
+  docCount: number;
+  schemaVersion: number;
+  /** 构建期注入的 minisearch 版本，升级后旧快照必须失效。 */
+  minisearchVersion: string;
+  /** 手写版本号；修改 tokenizer 逻辑时必须 +1。 */
+  tokenizerVersion: number;
 }
 
 export interface DeckDatabaseSchema {
@@ -87,6 +108,7 @@ export interface DeckDatabaseSchema {
   message: MessageRecord;
   fork: ForkRecord;
   searchIndex: SearchIndexRecord;
+  searchIndexSnapshot: SearchIndexSnapshotRecord;
 }
 
 export type StoreName = keyof DeckDatabaseSchema;
@@ -97,16 +119,17 @@ export const STORE_NAMES = [
   'message',
   'fork',
   'searchIndex',
+  'searchIndexSnapshot',
 ] as const satisfies readonly StoreName[];
 
 export interface DbMigration {
   readonly version: number;
   readonly description: string;
-  /** Dexie 的 stores 声明串，键为表名。 */
-  readonly stores: Readonly<Record<StoreName, string>>;
+  /** Dexie 的 stores 声明串，键为表名。允许早期迁移只覆盖当时的表。 */
+  readonly stores: Readonly<Record<string, string>>;
 }
 
-const V1_STORES: Readonly<Record<StoreName, string>> = {
+const V1_STORES: Readonly<Record<string, string>> = {
   project: 'id, name, createdAt, updatedAt',
   conversation: 'id, &remoteId, projectId, createdAt, updatedAt, *tags',
   message: 'id, convId, [convId+order], order',
@@ -124,9 +147,14 @@ export const MIGRATIONS: readonly DbMigration[] = [
     description: 'P0 基础表：项目、对话、消息、分叉、检索索引',
     stores: V1_STORES,
   },
+  {
+    version: 2,
+    description: '新增 searchIndexSnapshot 单例表（索引持久化，只加表零 backfill）',
+    stores: { ...V1_STORES, searchIndexSnapshot: 'id' },
+  },
 ];
 
-export function schemaForVersion(version: number): Readonly<Record<StoreName, string>> | undefined {
+export function schemaForVersion(version: number): Readonly<Record<string, string>> | undefined {
   return MIGRATIONS.find((migration) => migration.version === version)?.stores;
 }
 
