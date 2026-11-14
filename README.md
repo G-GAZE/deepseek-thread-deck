@@ -31,6 +31,7 @@ pnpm test:e2e
 - [docs/architecture.md](./docs/architecture.md)：架构说明
 - [docs/roadmap.md](./docs/roadmap.md)：路线图
 - [docs/adr/](./docs/adr/)：架构决策记录
+- [CONTRIBUTING.md](./CONTRIBUTING.md)：提交与 PR 规范
 
 ## 隐私
 

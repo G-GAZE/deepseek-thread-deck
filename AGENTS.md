@@ -129,5 +129,5 @@ pnpm test:e2e
 - `docs/architecture.md`：架构分层、数据流、依赖规则。
 - `docs/roadmap.md`：里程碑与退出标准。
 - `docs/adr/`：架构决策记录。
-- `docs/contributing.md`：提交、PR、评审规范。
+- `CONTRIBUTING.md`（仓库根目录）：提交、PR、评审规范。放在根目录是 GitHub 平台约定，新建 PR 时会自动提示。
 - `docs/tasks/`：当前任务书。
