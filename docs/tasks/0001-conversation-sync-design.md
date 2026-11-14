@@ -255,3 +255,6 @@ export interface ConversationSync {
 3. **真实 IndexedDB 性能复测**：用与 `tests/bench/sync-attribution.bench.ts` 相同的计时点，在真实 IndexedDB 上量「全量 / 增量 / 搜索 P95」，与 fake-indexeddb 数据对比，**据此决定 P1 前是否需要调整事务粒度**（当前实现是「逐会话一个事务」）。
 4. **降级验证**：模拟选择器失效 → 显示「适配中」不崩溃；关闭 `readonlySyncEnabled` → 显示「同步已关闭」。
 5. **Chrome 专项**：Chrome 自动化侧载不可用，必须人工在 `chrome://extensions` 加载并复验同步主流程。
+6. **检索召回率（AND 语义）**：当前 MiniSearch 用 `combineWith: 'AND'`，长句查询可能召回为空；需用真实查询样本（含长句）实测召回，再决定是否放宽为 OR / 加 fuzzy。
+7. **索引快照真实环境复测**：快照体积（当前实测 16.33 MiB / 5 万文档）与 `loadJSON` 耗时（467 ms）需在真实 IndexedDB 上复验，确认源存储配额足够。
+8. **projectId 负债**：`searchIndex` 表未存 `projectId`，目前靠内存映射；**P1 引入改项目 UI 时必须把 projectId 写进 `searchIndex` 表或改为按需 join**。
