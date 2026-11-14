@@ -64,8 +64,9 @@ export interface SyncSummary {
   synced: number;
   skipped: number;
   failed: Array<{ remoteId: string; reason: string }>;
+  /** 取消时「未处理」的会话数；正常完成恒为 0（必填字段）。 */
+  cancelled: number;
   durationMs?: number;   // D3：便于把性能写进交付证据
-  cancelled?: boolean;   // 用户取消（不是错误）
 }
 
 export interface SyncStatus {
@@ -119,16 +120,34 @@ export interface ConversationSync {
 
 ## 6. 执行位置与 MV3 生命周期
 
-- **sync 跑在 content script**。原因：页面数据与 `RemoteSource` 都在 `chat.deepseek.com` 源内，IndexedDB 也属于该源；background SW 属于扩展源，看不到页面 DB，popup 生命周期更短。
-- background SW 只做最小初始化，**不参与同步**（也不转发数据）。
-- **MV3 SW 30s idle 与 5 万条消息**：不适用 SW 限制，但 content script 仍会阻塞页面，因此：
-  - **分片**：按会话切批（默认 20 会话/批），每批 `await` 让出事件循环；
-  - **可取消**：每批与每个会话前检查 `signal.aborted`，命中即停止，返回 `ok` 且 `cancelled: true`；
-  - 5 万条消息按批写入，单批事务原子，页面不会长时间无响应。
-- **页面刷新 / 关闭 / popup 关闭**：
-  - content script 上下文销毁 → 进行中的 Dexie 事务随上下文回滚，已提交批次保留；
-  - 游标只在整轮成功后写一次，所以中断后**游标不推进** → 下次从上次游标重跑，靠幂等 upsert 消化重复；
-  - 不存在「游标写一半」的状态：游标是单 key 单对象写入，`browser.storage.local.set` 原子。
+### 6.1 谁在读、谁在写
+
+- **读页面数据的唯一合法位置是 content script**：`RemoteSource` 只能在 `chat.deepseek.com` 页面上下文使用（MAIN world 只读通道，ADR-007 补充说明）。
+- **扩展 DB（Dexie 库 `deepseek-thread-deck`）background 与 content script 都能写**，但谁写谁负责一致性；P0 只由 content script 写，background 不持有数据副本。
+- **当前选择：sync 跑在 content script**。popup 生命周期太短，background 看不到页面数据。
+
+### 6.2 由此带来的 UX 约束
+
+- 同步期间**必须停留在 DeepSeek 标签页**：切走不会中断，但关掉/刷新该标签页会中止（content script 上下文销毁）。
+- 中止时：进行中的 Dexie 事务随上下文回滚，已提交批次保留；**游标不推进**，重启后可从上次游标继续。
+- 5 万条消息量级：分片（默认 20 会话/批）+ 每批 `await` 让出事件循环 + 每批/每会话检查取消标志，避免长时间卡页面。
+- 取消从两个层面表达：
+  - **开始前已取消** → `err(SYNC_CANCELLED)`；
+  - **进行中取消** → `ok` + `cancelled: N`（N = 未处理会话数），已处理的保留。
+
+### 6.3 多标签页互斥锁（P0 必须）
+
+- 用户可能同时开多个 DeepSeek 标签页，都会触发同步；不加锁会重复劳动并放大写冲突。
+- 锁记录放 `browser.storage.local` 的 `deck.sync.lock`：`{ owner, acquiredAt, expiresAt }`，TTL **60s**。
+- 抢不到锁 → 返回 `err(SYNC_IN_PROGRESS)`（`retryable: true`），UI 提示「已有同步在进行中」。
+- 锁只在写库期间持有，**成功或失败都会释放**（`finally`），不会把用户锁死；页面崩溃留下的锁由 TTL 过期接管。
+- **已知局限**：`storage.local` 的「读-改-写」跨标签页不是原子的，存在极窄竞态；因此锁只作为「避免重复劳动」的优化，数据正确性由 sync 的幂等 upsert 兜底。后续可换用 Web Locks（`navigator.locks`），端口 `SyncLockPort` 不变。
+
+### 6.4 页面刷新 / 关闭
+
+- content script 上下文销毁 → 未提交事务回滚，已提交批次保留。
+- 游标只在整轮成功后写一次；中断 → 游标不推进 → 下次重跑，幂等 upsert 消化重复。
+- 不存在「游标写一半」：游标与锁都是单 key 单对象写入，`storage.local.set` 原子。
 
 ## 7. 部分失败
 
@@ -147,9 +166,21 @@ export interface ConversationSync {
 
 ## 9. UI 成功判定（Phase 7 按此实现）
 
-- `ok === true && failed.length === 0` → 显示「同步完成」；
-- `ok === true && failed.length > 0` → 显示「同步完成（N 条失败）」+ 重试入口；
-- `ok === false` → 按错误码显示「同步不可用 / 适配中」+ 重试入口。
+判定顺序（先看取消，再看失败，最后才说成功）：
+
+| 条件 | 展示 |
+| --- | --- |
+| `ok === false` | 按错误码显示：「同步不可用」/「适配中」/「同步已关闭」/「已有同步在进行中」+ 重试入口 |
+| `ok && cancelled > 0` | 「同步已取消（已处理 `synced + failed.length` / `total - skipped`）」+ **继续**按钮 |
+| `ok && failed.length > 0` | 「同步完成（N 条失败）」+ 重试入口 |
+| `ok && failed.length === 0` | 「同步完成」 |
+
+**skipped 展示层转译（固化）**：
+
+- `skipped` 是内部计数（游标跳过 + 同批重复），**默认不展示**，避免用户看到「跳过 480 条」以为出错；
+- `skipped > 0 && failed === 0 && cancelled === 0` → 只显示「同步完成」，不显示 skipped；
+- 仅在调试视图（设置页/诊断面板）展示 `skipped` 原始值。
+- `cancelled > 0` 时显示取消状态 + 继续按钮，且此时**不显示**「同步完成」。
 
 ## 10. 性能与基准
 
@@ -161,6 +192,22 @@ export interface ConversationSync {
   - search 的 P95 在 fake-indexeddb 下接近真实值，可作参考。
   - 以上口径同时写进对应 bench 文件头部注释。
 - 阶段 4 落 `tests/bench/sync.bench.ts`；阶段 5 落 `tests/bench/search.bench.ts`（P95 < 300ms）。
+
+### 10.1 同步耗时归因（2026-11-14，fake-indexeddb，中位数）
+
+`pnpm bench` 中 `tests/bench/sync-attribution.bench.ts`，500 对话 / 5 万消息：
+
+| 阶段 | 中位耗时 | 占全量 |
+| --- | --- | --- |
+| 夹具生成 | 28.3 ms | 1.4% |
+| 数据源（list + 500 次 fetch，含 structuredClone） | 184.2 ms | 9.0% |
+| 全量同步 @batch=20（生产默认） | 2043.7 ms | 100% |
+| 全量同步 @batch=500 | 1894.8 ms | 92.7% |
+| 单事务 bulk 写全量 | 7300.6 ms | 357% |
+
+推导：分片 overhead（24 次让出）约 **148.8 ms / 每次 6.2 ms**；数据源占 9%；剩余约 1.7 s 是 **500 个逐会话事务 + 编排** 的成本；**单事务大写入在该实现下反而慢 5.4 s**。
+
+结论：fake-indexeddb 的事务/批量写入特征与真实 IndexedDB 不同，**不能用这些数字决定 M1b 是否做并发或批量优化**；M1b 在真实 IndexedDB 上用同一组计时点复测后再定。**禁止把以上数字当性能承诺。**
 
 ## 11. 夹具与测试覆盖
 
@@ -185,3 +232,12 @@ export interface ConversationSync {
 | D3 | 同意 `SyncSummary.durationMs` 为可选字段 |
 | D4 | 同意 `syncAll` 增加可选 `SyncOptions`（`full` / `signal` / `batchSize`） |
 | D5 | 同意分阶段落 bench：阶段 4 先 `sync.bench.ts`，阶段 5 再 `search.bench.ts` |
+
+## 14. 修订记录
+
+| 日期 | 变更 |
+| --- | --- |
+| 2026-11-14 | `SyncSummary.cancelled` 由可选布尔改为**必填 number**（未处理会话数），新增 `SYNC_CANCELLED`（开始前取消）/ `SYNC_IN_PROGRESS`（抢锁失败）/ `FLAG_STORAGE_FAILED` 三个错误码 |
+| 2026-11-14 | 补 §6 执行位置与多标签页互斥锁（`deck.sync.lock`，TTL 60s） |
+| 2026-11-14 | 补 §9 skipped 展示层转译与取消态文案 |
+| 2026-11-14 | 补 §10.1 同步耗时归因数据与「不可外推」结论 |
