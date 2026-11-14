@@ -3,6 +3,8 @@ import type { DeckDatabase } from '@/core/db';
 import type { FeatureFlagSnapshot } from '@/shared/feature-flags';
 import type { CoreErrorCode, CoreResult } from '@/shared/result';
 
+import type { SyncLockPort } from './lock';
+
 /**
  * conversation-sync 的对外契约（任务 0001 阶段 4）。
  * 设计说明见 `docs/tasks/0001-conversation-sync-design.md`。
@@ -56,10 +58,10 @@ export interface SyncSummary {
   synced: number;
   skipped: number;
   failed: SyncFailure[];
+  /** 取消时「未处理」的会话数；正常完成为 0。用于 UI「已处理 N / M」。 */
+  cancelled: number;
   /** D3：便于把性能写进交付证据。 */
   durationMs?: number;
-  /** 用户取消不是错误。 */
-  cancelled?: boolean;
 }
 
 export interface SyncStatus {
@@ -103,5 +105,7 @@ export interface ConversationSyncDeps {
   db: DeckDatabase;
   flags: FeatureFlagSnapshot;
   cursor?: SyncCursorPort;
+  /** 多标签页互斥锁；缺省表示不加锁（仅测试/单标签场景）。 */
+  lock?: SyncLockPort;
   now?: () => number;
 }

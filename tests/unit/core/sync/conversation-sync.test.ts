@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openDeckDatabase, type DeckDatabase } from '@/core/db';
 import { createConversationSync } from '@/core/sync/conversation-sync';
 import { SYNC_CURSOR_KEY, createCursorStorage } from '@/core/sync/cursor';
+import { SYNC_LOCK_KEY, createStorageLock } from '@/core/sync/lock';
 import type { ConversationSync, RemoteConversationDetail, RemoteSource } from '@/core/sync/types';
 import { resolveFlags, type FeatureFlagName } from '@/shared/feature-flags';
 import { ok, type CoreErrorCode } from '@/shared/result';
@@ -96,6 +97,7 @@ async function setup(
     db,
     flags: resolveFlags(options.flags ?? {}),
     cursor: createCursorStorage(memory),
+    lock: createStorageLock(memory),
     now: options.now,
   });
 
@@ -484,7 +486,7 @@ describe('syncAll() 异常返回与降级', () => {
 
   it('游标读取失败时退化为全量同步，不阻塞', async () => {
     const { sync, memory, db } = await setup([conversation(0)]);
-    memory.failNextRead(new Error('cursor io error'));
+    memory.failNextReadFor(SYNC_CURSOR_KEY, new Error('cursor io error'));
 
     const result = await sync.syncAll();
 
@@ -524,10 +526,11 @@ describe('syncAll() 取消', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('unreachable');
-    expect(result.data.cancelled).toBe(true);
+    expect(result.data.cancelled).toBe(2);
     expect(result.data.synced).toBe(2);
     expect(memory.entries.has(SYNC_CURSOR_KEY)).toBe(false);
   });
+
   it('同批内取消：批内第一条后中止，剩余会话不再读取', async () => {
     const controller = new AbortController();
     const { sync, source, memory } = await setup(
@@ -543,10 +546,70 @@ describe('syncAll() 取消', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('unreachable');
-    expect(result.data.cancelled).toBe(true);
+    expect(result.data.cancelled).toBe(2);
     expect(result.data.synced).toBe(1);
     expect(source.fetchCalls).toEqual(['conv-0']);
     expect(memory.entries.has(SYNC_CURSOR_KEY)).toBe(false);
+  });
+
+  it('未取消时 cancelled 恒为 0', async () => {
+    const { sync } = await setup([conversation(0)]);
+
+    const result = await sync.syncAll();
+
+    expect(result.ok && result.data.cancelled).toBe(0);
+  });
+
+  it('开始前已取消：返回 SYNC_CANCELLED，不读页面不写库', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const { sync, source, db } = await setup([conversation(0)]);
+
+    const result = await sync.syncAll({ signal: controller.signal });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error.code).toBe('SYNC_CANCELLED');
+    expect(result.error.retryable).toBe(true);
+    expect(source.listCalls()).toBe(0);
+    await expect(db.conversation.count()).resolves.toBe(0);
+  });
+});
+
+describe('syncAll() 多标签页互斥锁', () => {
+  it('其他标签页持锁时返回 SYNC_IN_PROGRESS，不读页面', async () => {
+    const { sync, source, memory } = await setup([conversation(0)]);
+    memory.entries.set(SYNC_LOCK_KEY, {
+      owner: 'other-tab',
+      acquiredAt: Date.now(),
+      expiresAt: Date.now() + 30_000,
+    });
+
+    const result = await sync.syncAll();
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error.code).toBe('SYNC_IN_PROGRESS');
+    expect(result.error.retryable).toBe(true);
+    expect(source.listCalls()).toBe(0);
+  });
+
+  it('同步成功后释放锁，后续同步可再次进入', async () => {
+    const { sync, memory } = await setup([conversation(0)]);
+
+    await sync.syncAll();
+    expect(memory.entries.has(SYNC_LOCK_KEY)).toBe(false);
+
+    const second = await sync.syncAll({ full: true });
+    expect(second.ok).toBe(true);
+  });
+
+  it('同步失败也释放锁，不会把用户锁死', async () => {
+    const { sync, memory } = await setup([conversation(0)], { failList: 'SOURCE_UNAVAILABLE' });
+
+    await sync.syncAll();
+
+    expect(memory.entries.has(SYNC_LOCK_KEY)).toBe(false);
   });
 });
 

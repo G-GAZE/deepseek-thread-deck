@@ -31,9 +31,21 @@ export function createConversationSync(deps: ConversationSyncDeps): Conversation
   const now = deps.now ?? ((): number => Date.now());
 
   async function syncAll(options: SyncOptions = {}): Promise<CoreResult<SyncSummary>> {
+    if (isAborted(options.signal)) {
+      return {
+        ok: false,
+        error: { code: 'SYNC_CANCELLED', message: '同步已取消（尚未开始）', retryable: true },
+      };
+    }
+
     const gate = await ensureReady();
     if (!gate.ok) return gate;
 
+    // 多标签页互斥：拿不到锁说明别的标签页正在同步，直接让用户稍后重试。
+    return withLock(() => runSyncAll(options));
+  }
+
+  async function runSyncAll(options: SyncOptions): Promise<CoreResult<SyncSummary>> {
     const listed = await deps.source.listConversations();
     if (!listed.ok) return listed;
 
@@ -73,14 +85,16 @@ export function createConversationSync(deps: ConversationSyncDeps): Conversation
       await yieldToEventLoop();
     }
 
+    const processed = synced + failed.length;
     const summary: SyncSummary = {
       total: listed.data.length,
       synced,
       skipped: duplicateCount + skippedByCursor,
       failed,
+      // 取消时未处理的会话数，供 UI 显示「已处理 N / M」。
+      cancelled: cancelled ? Math.max(0, targets.length - processed) : 0,
       durationMs: now() - startedAt,
     };
-    if (cancelled) summary.cancelled = true;
 
     if (!cancelled && failed.length === 0 && synced > 0) {
       await advanceCursor(Math.max(...syncedUpdatedAt), startedAt);
@@ -93,6 +107,10 @@ export function createConversationSync(deps: ConversationSyncDeps): Conversation
     const gate = await ensureReady();
     if (!gate.ok) return gate;
 
+    return withLock(() => runSyncConversation(remoteId));
+  }
+
+  async function runSyncConversation(remoteId: string): Promise<CoreResult<SyncSummary>> {
     const startedAt = now();
     const detail = await deps.source.fetchConversation(remoteId);
     if (!detail.ok) return detail;
@@ -118,6 +136,7 @@ export function createConversationSync(deps: ConversationSyncDeps): Conversation
       total: 1,
       synced: 1,
       skipped: 0,
+      cancelled: 0,
       failed: [],
       durationMs: now() - startedAt,
     });
@@ -259,6 +278,34 @@ export function createConversationSync(deps: ConversationSyncDeps): Conversation
       lastSyncedAt,
       lastRunAt,
     });
+  }
+
+  /**
+   * 多标签页互斥：抢不到锁返回 `SYNC_IN_PROGRESS`。
+   * 锁只在写库期间持有，且无论成功失败都会释放，避免把用户锁死。
+   */
+  async function withLock<T>(run: () => Promise<CoreResult<T>>): Promise<CoreResult<T>> {
+    if (deps.lock === undefined) return run();
+
+    const owner = globalThis.crypto.randomUUID();
+    const acquired = await deps.lock.acquire(owner);
+    if (!acquired.ok) return acquired;
+    if (!acquired.data) {
+      return {
+        ok: false,
+        error: {
+          code: 'SYNC_IN_PROGRESS',
+          message: '已有同步在进行中（deck.sync.lock），请稍后重试',
+          retryable: true,
+        },
+      };
+    }
+
+    try {
+      return await run();
+    } finally {
+      await deps.lock.release(owner);
+    }
   }
 
   return { syncAll, syncConversation, getStatus };
