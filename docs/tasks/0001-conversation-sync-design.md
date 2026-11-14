@@ -258,6 +258,6 @@ export interface ConversationSync {
 6. **检索召回率（AND 语义）**：当前 MiniSearch 用 `combineWith: 'AND'`，长句查询可能召回为空；需用真实查询样本（含长句）实测召回，再决定是否放宽为 OR / 加 fuzzy。
 7. **索引快照真实环境复测**：快照体积（当前实测 16.33 MiB / 5 万文档）与 `loadJSON` 耗时（467 ms）需在真实 IndexedDB 上复验，确认源存储配额足够。
 8. **projectId 负债**：`searchIndex` 表未存 `projectId`，目前靠内存映射；**P1 引入改项目 UI 时必须把 projectId 写进 `searchIndex` 表或改为按需 join**。
-9. **索引快照持久性**：关闭浏览器 → 重开 **≥3 次**，确认 `loadJSON` 命中而非 rebuild；若快照被系统频繁回收，等于每次重建，持久化方案失效。
+9. **索引快照持久性**：关闭浏览器 → 重开 **≥3 次**，确认 `loadJSON` 命中而非 rebuild；若快照被系统频繁回收，等于每次重建，持久化方案失效。**多标签页场景另需记录 `loadJSON` 被调用 N 次、内存 N 份的差异，供 P1 决定是否做跨标签页共享索引。**
 10. **`loadJSON` 真实耗时**：fake-indexeddb 下 380–467 ms，真实环境可能 1–2 s；**超过 1 s 需要加加载进度提示**。
 11. **索引内存占用实测**：当前 Node 实测常驻 ≈100 MiB、瞬时峰值 ≈196 MiB；**> 100 MiB 触发降级方案评估**（按项目分片 / 只加载最近 N 会话）。
