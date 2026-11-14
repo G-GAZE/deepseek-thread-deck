@@ -51,7 +51,7 @@ describe('FeatureFlagStore.get()', () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
-    expect(result.error.code).toBe('UNKNOWN');
+    expect(result.error.code).toBe('FLAG_STORAGE_FAILED');
     expect(result.error.retryable).toBe(true);
     expect(result.error.message).toBe('quota');
   });
@@ -92,6 +92,7 @@ describe('FeatureFlagStore.set()', () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
+    expect(result.error.code).toBe('FLAG_STORAGE_FAILED');
     expect(result.error.message).toBe('disk full');
     expect(memory.entries.has(FLAGS_STORAGE_KEY)).toBe(false);
   });
@@ -138,6 +139,7 @@ describe('FeatureFlagStore.reset()', () => {
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('unreachable');
+    expect(result.error.code).toBe('FLAG_STORAGE_FAILED');
     expect(result.error.message).toBe('remove blocked');
     expect(memory.entries.has(FLAGS_STORAGE_KEY)).toBe(true);
   });

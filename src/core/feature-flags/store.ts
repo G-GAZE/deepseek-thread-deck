@@ -34,7 +34,7 @@ export function createFeatureFlagStore(storage: LocalStoragePort): FeatureFlagSt
       try {
         await storage.write(FLAGS_STORAGE_KEY, next);
       } catch (cause) {
-        return { ok: false, error: toCoreError(cause, 'UNKNOWN', true) };
+        return { ok: false, error: toCoreError(cause, 'FLAG_STORAGE_FAILED', true) };
       }
       return ok(resolveFlags(next));
     },
@@ -43,7 +43,7 @@ export function createFeatureFlagStore(storage: LocalStoragePort): FeatureFlagSt
       try {
         await storage.remove(FLAGS_STORAGE_KEY);
       } catch (cause) {
-        return { ok: false, error: toCoreError(cause, 'UNKNOWN', true) };
+        return { ok: false, error: toCoreError(cause, 'FLAG_STORAGE_FAILED', true) };
       }
       return ok(resolveFlags({}));
     },
@@ -57,7 +57,7 @@ async function readOverrides(
     const raw = await storage.read(FLAGS_STORAGE_KEY);
     return ok(asPlainRecord(raw));
   } catch (cause) {
-    return { ok: false, error: toCoreError(cause, 'UNKNOWN', true) };
+    return { ok: false, error: toCoreError(cause, 'FLAG_STORAGE_FAILED', true) };
   }
 }
 
