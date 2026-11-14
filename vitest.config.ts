@@ -22,7 +22,8 @@ export default defineConfig({
       reportsDirectory: './coverage',
       reporter: ['text', 'html', 'lcov'],
       include: ['src/core/**/*.ts', 'src/shared/**/*.ts'],
-      exclude: ['**/*.d.ts'],
+      // local-storage.ts 只有类型声明、没有运行时语句，计入分母会永远显示 0%。
+      exclude: ['**/*.d.ts', 'src/shared/local-storage.ts'],
       thresholds: {
         statements: 70,
         branches: 70,
