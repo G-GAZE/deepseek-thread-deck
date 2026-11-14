@@ -16,6 +16,7 @@ export type CoreErrorCode =
   | 'SOURCE_PARSE_FAILED'
   | 'SELECTOR_MISSING'
   | 'INDEX_INIT_FAILED'
+  | 'SYNC_DISABLED'
   | 'NOT_FOUND'
   | 'UNKNOWN';
 
