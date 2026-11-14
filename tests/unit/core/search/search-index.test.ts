@@ -327,6 +327,217 @@ describe('removeConversation()', () => {
   });
 });
 
+describe('降级与健壮性', () => {
+  function brokenEngine(): never {
+    throw new Error('miniSearch 构造失败');
+  }
+
+  it('首次 search 就遇到引擎初始化失败时，直接退标题搜索', async () => {
+    const { index } = await setup(
+      [{ id: 'c1', title: '标题兜底可用', messages: [{ remoteId: 'm1', content: '正文' }] }],
+      { engineFactory: brokenEngine },
+    );
+
+    const result = await index.search('标题兜底可用');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.data[0]?.convId).toBe('c1');
+  });
+
+  it('引擎初始化失败时 upsertConversation 返回错误而不是静默继续', async () => {
+    const { index } = await setup(
+      [{ id: 'c1', title: '标题', messages: [{ remoteId: 'm1', content: '正文' }] }],
+      { engineFactory: brokenEngine },
+    );
+
+    const result = await index.upsertConversation('c1');
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error.code).toBe('INDEX_INIT_FAILED');
+  });
+
+  it('flag 关闭时 rebuild 仍写索引行但不建引擎', async () => {
+    const { db, index } = await setup(
+      [{ id: 'c1', title: '标题', messages: [{ remoteId: 'm1', content: '正文' }] }],
+      { flags: { fullTextSearchEnabled: false } },
+    );
+
+    const rebuilt = await index.rebuild();
+
+    expect(rebuilt.ok).toBe(true);
+    await expect(db.searchIndex.count()).resolves.toBe(1);
+  });
+
+  it('flag 关闭时 upsert 与 remove 都不建引擎且不报错', async () => {
+    const { index } = await setup(
+      [{ id: 'c1', title: '标题', messages: [{ remoteId: 'm1', content: '正文' }] }],
+      { flags: { fullTextSearchEnabled: false } },
+    );
+    await index.rebuild();
+
+    await expect(index.upsertConversation('c1')).resolves.toEqual({ ok: true, data: undefined });
+    await expect(index.removeConversation('c1')).resolves.toEqual({ ok: true, data: undefined });
+  });
+
+  it('降级时标题搜索也支持 projectId 过滤', async () => {
+    const { index } = await setup(
+      [
+        { id: 'c1', title: '项目一的标题', projectId: 'p1', messages: [] },
+        { id: 'c2', title: '项目一的另一个标题', projectId: 'p2', messages: [] },
+      ],
+      { flags: { fullTextSearchEnabled: false } },
+    );
+
+    const result = await index.search('项目一', { projectId: 'p1' });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0]?.convId).toBe('c1');
+  });
+
+  it('陈旧的 searchIndex 行（会话已不存在）不会让搜索崩溃', async () => {
+    const { db, index } = await setup([
+      { id: 'c1', title: '正常会话', messages: [{ remoteId: 'm1', content: '正文' }] },
+    ]);
+    await index.rebuild();
+    await db.searchIndex.add({
+      id: 'ghost:__conversation__',
+      convId: 'ghost',
+      messageId: '',
+      title: '幽灵索引行',
+      body: '',
+      tokens: ['幽灵'],
+    });
+
+    const fresh = createSearchIndex({ db, flags: resolveFlags({}) });
+    const result = await fresh.search('幽灵索引行');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.data[0]?.convId).toBe('ghost');
+  });
+
+  it('引擎里有文档但索引行已被删除时，跳过该命中而不是抛错', async () => {
+    const { db, index } = await setup([
+      { id: 'c1', title: '会被删行', messages: [{ remoteId: 'm1', content: '唯一关键词' }] },
+    ]);
+    await index.rebuild();
+    await db.searchIndex.delete('c1:m1');
+
+    const result = await index.search('唯一关键词');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.data).toHaveLength(0);
+  });
+
+  it('读取索引表失败时退标题搜索', async () => {
+    const { db, index } = await setup([
+      { id: 'c1', title: '读索引失败仍可搜标题', messages: [{ remoteId: 'm1', content: '正文' }] },
+    ]);
+    vi.spyOn(db.searchIndex, 'toArray').mockRejectedValueOnce(new Error('index io'));
+
+    const result = await index.search('读索引失败仍可搜标题');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.data[0]?.convId).toBe('c1');
+  });
+
+  it('rebuild 写索引表失败时返回 DB_WRITE_FAILED', async () => {
+    const { db, index } = await setup([
+      { id: 'c1', title: '标题', messages: [{ remoteId: 'm1', content: '正文' }] },
+    ]);
+    vi.spyOn(db.searchIndex, 'bulkPut').mockRejectedValueOnce(new Error('写放大'));
+
+    const result = await index.rebuild();
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error.code).toBe('DB_WRITE_FAILED');
+  });
+
+  it('upsert 写索引表失败时返回 DB_WRITE_FAILED', async () => {
+    const { db, index } = await setup([
+      { id: 'c1', title: '标题', messages: [{ remoteId: 'm1', content: '正文' }] },
+    ]);
+    await index.rebuild();
+    vi.spyOn(db.searchIndex, 'bulkPut').mockRejectedValueOnce(new Error('写放大'));
+
+    const result = await index.upsertConversation('c1');
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error.code).toBe('DB_WRITE_FAILED');
+  });
+
+  it('search 读取命中行失败时返回 DB_READ_FAILED', async () => {
+    const { db, index } = await setup([
+      { id: 'c1', title: '标题', messages: [{ remoteId: 'm1', content: '关键词' }] },
+    ]);
+    await index.rebuild();
+    vi.spyOn(db.searchIndex, 'bulkGet').mockRejectedValueOnce(new Error('读失败'));
+
+    const result = await index.search('关键词');
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error.code).toBe('DB_READ_FAILED');
+  });
+
+  it('降级路径的标题搜索读库失败时返回 DB_READ_FAILED', async () => {
+    const { db, index } = await setup(
+      [{ id: 'c1', title: '标题', messages: [{ remoteId: 'm1', content: '正文' }] }],
+      { flags: { fullTextSearchEnabled: false } },
+    );
+    vi.spyOn(db.conversation, 'toArray').mockRejectedValueOnce(new Error('读失败'));
+
+    const result = await index.search('标题');
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error.code).toBe('DB_READ_FAILED');
+  });
+
+  it('惰性初始化时 rebuild 失败，search 退回标题搜索而不是报错', async () => {
+    const { db, index } = await setup([
+      { id: 'c1', title: '回退仍可用', messages: [{ remoteId: 'm1', content: '正文' }] },
+    ]);
+    vi.spyOn(db.searchIndex, 'bulkPut').mockRejectedValueOnce(new Error('写放大'));
+
+    const result = await index.search('回退仍可用');
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.data[0]?.convId).toBe('c1');
+  });
+
+  it('引擎初始化失败时 removeConversation 不崩溃', async () => {
+    const { index } = await setup([], { engineFactory: brokenEngine });
+
+    await expect(index.removeConversation('c1')).resolves.toEqual({ ok: true, data: undefined });
+  });
+
+  it('removeConversation 写失败时返回 DB_WRITE_FAILED', async () => {
+    const { db, index } = await setup([
+      { id: 'c1', title: '标题', messages: [{ remoteId: 'm1', content: '正文' }] },
+    ]);
+    await index.rebuild();
+    vi.spyOn(db.searchIndex, 'where').mockImplementationOnce(() => {
+      throw new Error('查询构造失败');
+    });
+
+    const result = await index.removeConversation('c1');
+
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error.code).toBe('DB_WRITE_FAILED');
+  });
+});
+
 describe('降级', () => {
   it('fullTextSearchEnabled=false 时退回标题搜索：标题命中、正文不命中', async () => {
     const { index } = await setup(

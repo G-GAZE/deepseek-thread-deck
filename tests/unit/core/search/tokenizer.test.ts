@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createTokenizer, tokenizeText } from '@/core/search/tokenizer';
+import { createSegmenter, createTokenizer, tokenizeText } from '@/core/search/tokenizer';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('tokenizeText() 中文分词', () => {
   it('用 Intl.Segmenter 切出中文词', () => {
@@ -42,6 +46,10 @@ describe('tokenizeText() 中文分词', () => {
     expect(tokenizeText('')).toEqual([]);
     expect(tokenizeText('   \n\t ')).toEqual([]);
   });
+
+  it('全 emoji 输入返回空数组，不产生检索词', () => {
+    expect(tokenizeText('😀🚀🧩📌✅')).toEqual([]);
+  });
 });
 
 describe('createTokenizer() 降级', () => {
@@ -66,5 +74,24 @@ describe('createTokenizer() 降级', () => {
     const document = '中文分词方案对比';
 
     expect(tokenizer(document)).toEqual(tokenizeText(document));
+  });
+
+  it('Intl.Segmenter 不存在时 createSegmenter 返回 null，tokenizer 仍可用', () => {
+    vi.stubGlobal('Intl', { Segmenter: undefined });
+
+    expect(createSegmenter()).toBeNull();
+    expect(createTokenizer()('Dexie 迁移')).toContain('迁移');
+  });
+
+  it('Segmenter 构造抛错时降级为 null，不把异常抛给调用方', () => {
+    vi.stubGlobal('Intl', {
+      Segmenter: class {
+        constructor() {
+          throw new Error('icu unavailable');
+        }
+      },
+    });
+
+    expect(createSegmenter()).toBeNull();
   });
 });
