@@ -7,6 +7,31 @@ import tseslint from 'typescript-eslint';
 // 该文件由 `pnpm exec wxt prepare`（postinstall 自动执行）产出，缺失时先跑一次 prepare。
 import wxtAutoImports from './.wxt/eslint-auto-imports.mjs';
 
+// 浏览器/Node 常用的全局名（不引入 globals 依赖，按需列出）。
+const browserGlobals = {
+  window: 'readonly',
+  document: 'readonly',
+  navigator: 'readonly',
+  console: 'readonly',
+  setTimeout: 'readonly',
+  clearTimeout: 'readonly',
+  setInterval: 'readonly',
+  clearInterval: 'readonly',
+  Event: 'readonly',
+  HTMLElement: 'readonly',
+  HTMLInputElement: 'readonly',
+  HTMLSelectElement: 'readonly',
+  crypto: 'readonly',
+};
+
+const nodeGlobals = {
+  process: 'readonly',
+  console: 'readonly',
+  crypto: 'readonly',
+  URL: 'readonly',
+  Buffer: 'readonly',
+};
+
 export default tseslint.config(
   {
     ignores: [
@@ -25,6 +50,7 @@ export default tseslint.config(
   {
     files: ['**/*.vue'],
     languageOptions: {
+      globals: browserGlobals,
       parserOptions: { parser: tseslint.parser },
     },
   },
@@ -69,8 +95,10 @@ export default tseslint.config(
         {
           patterns: [
             {
-              group: ['dexie', '@/core/db', '@/core/db/*', '~/core/db', '~/core/db/*'],
-              message: 'UI 层不得直接访问 IndexedDB，请调用 core 暴露的 API。',
+              // core 暴露的 `openDeckDatabase` 是访问本地库的唯一合法入口；
+              // 直接 import dexie 仍然禁止（AGENTS.md §1）。
+              group: ['dexie'],
+              message: 'UI 层不得直接使用 dexie，请通过 core 暴露的 API（如 openDeckDatabase）。',
             },
             {
               group: ['@/core/driver/*', '~/core/driver/*'],
@@ -83,6 +111,9 @@ export default tseslint.config(
   },
   {
     files: ['tests/**/*.ts', '*.config.ts', 'scripts/**/*.ts'],
+    languageOptions: {
+      globals: { ...nodeGlobals, ...browserGlobals },
+    },
     rules: {
       'no-console': 'off',
     },
