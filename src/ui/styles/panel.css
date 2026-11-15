@@ -147,16 +147,48 @@
   max-height: 32vh;
 }
 
+/* 「对话列表 / 检索」分裂器容器：上列表吃剩余空间，检索区高度可拖。 */
+.deck-split {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.deck-splitter {
+  position: relative;
+  flex: 0 0 9px;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.deck-splitter::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  left: 8px;
+  height: 1px;
+  border-radius: 1px;
+  background: #e5e7eb;
+}
+
+.deck-splitter:hover::after,
+.deck-splitter:active::after {
+  background: #4d6bfe;
+}
+
 /* 会话列表：吃掉剩余空间，列表内部滚动。 */
 .deck-section--conversations {
   flex: 1 1 auto;
   min-height: 96px;
 }
 
-/* 检索区：固定高度，结果列表内部滚动。 */
+/* 检索区：高度由分裂器控制，内部滚动。 */
 .deck-section--search {
   flex: 0 0 auto;
-  max-height: 40vh;
+  min-height: 120px;
+  overflow: hidden;
 }
 
 .deck-section--tree .deck-list,
@@ -164,6 +196,11 @@
 .deck-section--search .deck-list {
   overflow-y: auto;
   min-height: 0;
+}
+
+.deck-section--conversations .deck-list,
+.deck-section--search .deck-list {
+  flex: 1 1 auto;
 }
 
 .deck-section__head {

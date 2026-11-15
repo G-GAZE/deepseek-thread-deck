@@ -40,6 +40,35 @@ function endDrag(): void {
   dragging = false;
 }
 
+/** 「对话列表 / 检索」之间的分裂器：拖动调整检索区高度。 */
+const SPLIT_MIN = 120;
+const SPLIT_GUTTER = 140;
+const splitEl = ref<HTMLElement | null>(null);
+const searchHeight = ref(240);
+let splitting = false;
+let splitStartY = 0;
+let splitStartHeight = 0;
+let splitMaxHeight = 400;
+
+function startSplit(event: PointerEvent): void {
+  splitting = true;
+  splitStartY = event.clientY;
+  splitStartHeight = searchHeight.value;
+  const containerHeight = splitEl.value?.clientHeight ?? 400;
+  splitMaxHeight = Math.max(SPLIT_MIN + 40, containerHeight - SPLIT_GUTTER);
+  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+}
+
+function moveSplit(event: PointerEvent): void {
+  if (!splitting) return;
+  const next = splitStartHeight - (event.clientY - splitStartY);
+  searchHeight.value = Math.min(Math.max(SPLIT_MIN, next), splitMaxHeight);
+}
+
+function endSplit(): void {
+  splitting = false;
+}
+
 let timer: ReturnType<typeof setInterval> | null = null;
 
 onMounted(async () => {
@@ -115,8 +144,20 @@ onUnmounted(() => {
       </div>
 
       <ProjectTree />
-      <ConversationList />
-      <SearchPanel />
+
+      <div ref="splitEl" class="deck-split">
+        <ConversationList />
+        <div
+          class="deck-splitter"
+          role="separator"
+          title="拖动调整检索区高度"
+          @pointerdown="startSplit"
+          @pointermove="moveSplit"
+          @pointerup="endSplit"
+          @pointercancel="endSplit"
+        />
+        <SearchPanel :style="{ height: `${searchHeight}px` }" />
+      </div>
     </div>
   </aside>
 </template>

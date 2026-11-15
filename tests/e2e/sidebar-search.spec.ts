@@ -117,6 +117,23 @@ test.describe('主流程：同步 → 检索', () => {
       await panel.getByText('游标推进要保守', { exact: false }).first().click();
       await expect(panel.getByTestId('search-hint')).toContainText('复制', { timeout: 10_000 });
 
+      // 分裂器：向上拖动应让检索区变高（对话列表让出空间）
+      const searchSection = panel.locator('.deck-section--search');
+      const beforeBox = await searchSection.boundingBox();
+      const splitterBox = await panel.locator('.deck-splitter').boundingBox();
+      if (beforeBox === null || splitterBox === null) throw new Error('分裂器不可见');
+      await page.mouse.move(
+        splitterBox.x + splitterBox.width / 2,
+        splitterBox.y + splitterBox.height / 2,
+      );
+      await page.mouse.down();
+      await page.mouse.move(splitterBox.x + splitterBox.width / 2, splitterBox.y - 80, {
+        steps: 5,
+      });
+      await page.mouse.up();
+      const afterBox = await searchSection.boundingBox();
+      expect(afterBox?.height ?? 0).toBeGreaterThan((beforeBox.height ?? 0) + 40);
+
       // 折叠态：只保留一个小圆按钮，不占满右侧整条（L3 修复的回归保护）
       await panel.getByTitle('收起线栈面板').click();
       const fab = page.locator('.deck-fab');
