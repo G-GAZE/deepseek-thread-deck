@@ -345,6 +345,36 @@ describe('syncAll() 幂等与增量', () => {
     expect(source.fetchCalls).toHaveLength(4);
   });
 
+  it('页面缓存新增的旧会话也会补同步，且游标不回退', async () => {
+    const first = conversation(1);
+    const { sync, source, memory, db } = await setup([first]);
+    await sync.syncAll();
+    const cursorAfterFirst = memory.entries.get(SYNC_CURSOR_KEY);
+    expect(cursorAfterFirst).toMatchObject({ lastSyncedAt: first.updatedAt });
+
+    // 模拟：用户刚点开一个很久以前的会话，它出现在页面缓存里（updatedAt 更早）
+    source.replaceConversations([first, conversation(0)]);
+    const second = await sync.syncAll();
+
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error('unreachable');
+    expect(second.data.synced).toBe(1);
+    expect(second.data.skipped).toBe(1);
+    await expect(db.conversation.get('conv-0')).resolves.toBeDefined();
+    // 游标保持在最大值，不被旧会话拖回去
+    expect(memory.entries.get(SYNC_CURSOR_KEY)).toMatchObject({ lastSyncedAt: first.updatedAt });
+  });
+
+  it('本地已存在且 updatedAt 未前进的会话仍被增量跳过', async () => {
+    const { sync } = await setup([conversation(0), conversation(1)]);
+    await sync.syncAll();
+
+    const second = await sync.syncAll();
+
+    expect(second.ok && second.data.synced).toBe(0);
+    expect(second.ok && second.data.skipped).toBe(2);
+  });
+
   it('游标内容为最后成功会话的最大 updatedAt', async () => {
     const { sync, memory } = await setup([conversation(0), conversation(5)]);
 

@@ -52,7 +52,8 @@ export function createConversationSync(deps: ConversationSyncDeps): Conversation
     const startedAt = now();
     const cursor = await readCursor(options);
     const { candidates, duplicateCount } = dedupe(listed.data);
-    const targets = selectTargets(candidates, options, cursor);
+    const known = await loadKnownRemoteIds();
+    const targets = selectTargets(candidates, options, cursor, known);
     const skippedByCursor = candidates.length - targets.length;
 
     const failed: SyncFailure[] = [];
@@ -97,7 +98,10 @@ export function createConversationSync(deps: ConversationSyncDeps): Conversation
     };
 
     if (!cancelled && failed.length === 0 && synced > 0) {
-      await advanceCursor(Math.max(...syncedUpdatedAt), startedAt);
+      const previous = cursor?.lastSyncedAt ?? null;
+      const maxSynced = Math.max(...syncedUpdatedAt);
+      // 游标只前进不后退：页面缓存里新增的旧会话不会把游标拖回去。
+      await advanceCursor(previous === null ? maxSynced : Math.max(previous, maxSynced), startedAt);
     }
 
     return ok(summary);
@@ -200,13 +204,28 @@ export function createConversationSync(deps: ConversationSyncDeps): Conversation
     candidates: readonly RemoteConversationSummary[],
     options: SyncOptions,
     cursor: SyncCursor | null,
+    known: ReadonlySet<string>,
   ): RemoteConversationSummary[] {
     if (options.full === true) return [...candidates];
 
     const baseline = cursor?.lastSyncedAt ?? null;
-    if (baseline === null) return [...candidates];
+    return candidates.filter((summary) => {
+      if (baseline === null) return true;
+      if (summary.updatedAt > baseline) return true;
+      // 页面缓存会随用户浏览不断新增「很久以前」的会话，
+      // 本地没有的一律补同步，否则这些旧会话永远进不来。
+      return !known.has(summary.remoteId);
+    });
+  }
 
-    return candidates.filter((summary) => summary.updatedAt > baseline);
+  async function loadKnownRemoteIds(): Promise<Set<string>> {
+    try {
+      const rows = await deps.db.conversation.toArray();
+      return new Set(rows.map((row) => row.remoteId));
+    } catch {
+      // 读不到本地清单时按「全部未知」处理：宁可多同步也不能漏。
+      return new Set();
+    }
   }
 
   async function syncOne(
