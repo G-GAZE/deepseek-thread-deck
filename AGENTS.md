@@ -4,9 +4,9 @@
 
 ## 0. 项目一句话
 
-本地优先、MIT 开源的 DeepSeek 网页版对话管理层浏览器扩展（Chrome/Edge MV3 为主，Firefox WebExtensions 兼容）。把 DeepSeek 网页版的时间流对话列表升级为以项目/话题为中心、可检索、可复用上下文、可客户端分叉的工作台。
+本地优先、MIT 开源的 DeepSeek 网页版对话管理层浏览器扩展 (Chrome/Edge MV3 为主，Firefox WebExtensions 兼容) 。把 DeepSeek 网页版的时间流对话列表升级为以项目/话题为中心、可检索、可复用上下文、可客户端分叉的工作台。
 
-## 1. 硬约束（违反即拒稿，不得自行推翻）
+## 1. 硬约束 (违反即拒稿，不得自行推翻)
 
 - ADR-001：不做 DeepSeek 开放 API，不要求 API Key，不产生 API 费用。
 - ADR-002：形态为浏览器扩展，不做独立客户端。
@@ -30,9 +30,9 @@
 
 ADR 全文见 `docs/adr/`。
 
-## 2. 技术栈（固定）
+## 2. 技术栈 (固定)
 
-TypeScript strict / WXT（Vite）/ Vue 3 `<script setup>` / Pinia / UnoCSS / Dexie / MiniSearch + `Intl.Segmenter` / Vitest / Playwright / ESLint + Prettier / pnpm。
+TypeScript strict / WXT (Vite) / Vue 3 `<script setup>` / Pinia / UnoCSS / Dexie / MiniSearch + `Intl.Segmenter` / Vitest / Playwright / ESLint + Prettier / pnpm。
 
 已否决：React、Svelte、Plasmo、Element Plus、Naive UI、独立客户端/API 路线。理由见 ADR-004。
 
@@ -65,7 +65,7 @@ tests/
 
 以 `src/core/db/schema.ts` 为唯一事实源。字段定义见 `docs/prd.md` 与 `docs/architecture.md`。新增字段必须写 Dexie 版本迁移；不允许无迁移直接改 schema。
 
-## 5. 常用命令（以 `package.json` 为准）
+## 5. 常用命令 (以 `package.json` 为准)
 
 ```bash
 pnpm install
@@ -83,28 +83,30 @@ pnpm test:e2e
 
 交付前必须跑通：`pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm build`。若脚本尚未创建，Agent 应按上述命名补齐 `package.json`。
 
-## 6. 交付格式（每个任务必须输出，正文 <= 15 行）
+## 6. 交付格式 (每个任务必须输出，正文 <= 15 行)
 
-```txt
 状态: 完成 | 部分完成 | 失败
-变更: N 文件 — a.ts, b.ts, ...（超过 10 个写「+M 个，见 git diff」）
+变更: N 文件 — a.ts, b.ts, ... (超过 10 个写「+M 个，见 git diff」) 
 验证: lint ✓ | typecheck ✓ | test 42/42 ✓ | coverage 78% ✓ | build ✓
 阻塞: 无 | [一句话]
 待决策: 无 | [决策卡]
 降级: 无 | [涉及写入/网络能力时必填，一行]
 文档建议: 无 | <文件> §<节>：「旧描述」→「新描述」
-```
+下一步: <一个具体动作> (仅建议，不得自行开始)
 
 - 不写叙述、不写总结段、不复述 diff。
 - 测试未全绿不得写「完成」。
 - 风险/降级仅在本次变更引入新风险时用一行列出，没有就写「无」。
 - **禁止直接修改** `docs/open-questions.md`、`docs/roadmap.md` 的状态看板、各设计说明的状态头。这些是人的决策记录，只能通过交付卡的「文档建议」字段提出，由人工确认后修改。代码、测试、任务书内的实现说明不在此限。
+- 「下一步」只写一个具体动作 (如「开阶段 6：project-store」) ，
+不写计划、不写步骤列表、不写理由。
+- 「下一步」是建议：输出后停下等人工放行，不得自动开始 (见 §6.3)
 
-### 6.1 GitHub 操作（gh CLI）
+### 6.1 GitHub 操作 (gh CLI)
 
 - 所有 issue、PR、review、comment、CI 查询一律通过 `gh` CLI 完成，不操作 Web UI。
 - 只读命令可自主执行：`gh issue view`、`gh pr view`、`gh pr list`、`gh run list`。
-- 写入命令（创建/合并 PR、关闭 issue、`gh api -X DELETE/PUT/PATCH` 等）必须先经人工确认。
+- 写入命令 (创建/合并 PR、关闭 issue、`gh api -X DELETE/PUT/PATCH` 等) 必须先经人工确认。
 - **Agent 不得自行创建 GitHub Issue**；创建 Issue 是人类的决策。
 - 读取时始终使用 `--json` 加 `| cat`，避免分页器和 scope 报错：
   ```bash
@@ -114,25 +116,23 @@ pnpm test:e2e
 - 多行 PR 正文先写临时文件，用 gh pr create --body-file 提交。
 - gh 因权限/认证失败时，停止操作并明确请求人工介入，不要 fallback 到网页或其他连接器。
 
-### 6.2 决策卡（仅 §6.3 触发时输出，等人工确认后才继续）
+### 6.2 决策卡 (仅 §6.3 触发时输出，等人工确认后才继续)
 
-```txt
 决策: <选了什么>
 备选: <还有什么，一句话>
-可逆性: 低 | 中 | 高   （低 = 返工改 >5 文件或需数据迁移）
+可逆性: 低 | 中 | 高    (低 = 返工改 >5 文件或需数据迁移) 
 选错的症状: <什么现象会暴露选错>
 开源参照: <知名扩展是否这么做；未找到写「未找到」>
-```
 
 可逆性为「中/高」的不出卡，直接做，在交付卡里一行带过。
 
 ### 6.3 何时停
 
-必须先出决策卡并停下等确认（满足任一）：
+必须先出决策卡并停下等确认 (满足任一) ：
 
 - 数据模型变更 / Dexie 版本迁移
 - content script 与 background 的执行位置或通信方式变更
-- ADR 已固定的边界（§1 已列权限/依赖/外发请求三条，不重复）
+- ADR 已固定的边界 (§1 已列权限/依赖/外发请求三条，不重复) 
 
 其他停止规则：
 
@@ -141,13 +141,19 @@ pnpm test:e2e
 - 禁止用流畅长文掩盖不确定。
 - 同一测试连续两次失败且原因不明 → 停下，不要盲改。
 
-## 6.4 工程规范
+## 6.4 任务书 (开工前是否需要先停)
+
+- 任务书已覆盖当前阶段的范围与验收 → **直接做**，交付卡收尾。
+- 任务书有空白，且空白处涉及不可逆决策 → 出**决策卡** (不是计划) ，等确认。
+- 任务书有空白，但只是可逆的实现细节 → 自行决定，交付卡一行带过。
+- 当前阶段**没有任务书** → 先交一份 ≤20 行的任务书草案 (范围/不做/验收) ，
+  经确认后再开工；不要用"计划"代替任务书。
+
+### 6.5 工程规范
 
 - 小步 PR；先写测试后实现；核心逻辑覆盖率 > 70%；主流程必须有 Playwright e2e。
 - 涉及 deepseek-driver 的改动，PR 必须说明其 license 与版本。
 - 不得自行扩大范围；写入类功能先做只读原型，再开 feature flag。
-
-## 7. 降级策略（写入/网络失败必须查此表）
 
 ## 7. 降级策略
 
@@ -163,7 +169,7 @@ pnpm test:e2e
 
 - 必读：本文件 + 当前任务书 + 该任务引用设计说明的 §1–§9。
 - 不预读：其他任务书、设计文档 §10 之后的实测数据/裁决记录/修订历史、ADR 全文
-  （只需遵守 §1 列出的硬约束条目）。
+   (只需遵守 §1 列出的硬约束条目) 。
 - 需要时按指针跳转，禁止一次性加载整个 `docs/`。
 
 例外：任务涉及性能、锁 TTL、索引体积、内存时，须读对应设计说明 §10 起的实测部分。
@@ -175,6 +181,6 @@ pnpm test:e2e
 - `docs/architecture.md`：架构分层、数据流、依赖规则。
 - `docs/roadmap.md`：里程碑与退出标准。
 - `docs/adr/`：架构决策记录。
-- `CONTRIBUTING.md`（仓库根目录）：提交、PR、评审规范。放在根目录是 GitHub 平台约定，新建 PR 时会自动提示。
+- `CONTRIBUTING.md` (仓库根目录) ：提交、PR、评审规范。放在根目录是 GitHub 平台约定，新建 PR 时会自动提示。
 - `docs/tasks/`：当前任务书。
-- `docs/agents/`：Agent 操作细则（github 等），非必读，按需跳转。
+- `docs/agents/`：Agent 操作细则 (github 等) ，非必读，按需跳转。
