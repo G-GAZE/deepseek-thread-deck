@@ -59,7 +59,7 @@ function installServices(
     options.sync === undefined
       ? {
           syncAll: vi.fn(async () =>
-            ok({ total: 0, synced: 0, skipped: 0, cancelled: 0, failed: [] }),
+            ok({ total: 0, synced: 0, skipped: 0, cancelled: 0, syncedRemoteIds: [], failed: [] }),
           ),
         }
       : options.sync;
@@ -154,7 +154,14 @@ describe('syncNow()', () => {
     const fakes = installServices({
       sync: {
         syncAll: vi.fn(async () =>
-          ok({ total: 3, synced: 3, skipped: 0, cancelled: 0, failed: [] }),
+          ok({
+            total: 3,
+            synced: 3,
+            skipped: 0,
+            cancelled: 0,
+            syncedRemoteIds: ['c1', 'c2', 'c3'],
+            failed: [],
+          }),
         ),
       },
     });
@@ -166,6 +173,8 @@ describe('syncNow()', () => {
 
     expect(store.syncMessage).toBe('同步完成（3 条）');
     expect(fakes.projects.listTree).toHaveBeenCalledTimes(1);
+    // 同步后必须把本轮会话写进检索索引，否则「同步完再搜」为空
+    expect(fakes.search.upsertConversation).toHaveBeenCalledTimes(3);
   });
 
   it('部分失败时显示失败条数', async () => {
@@ -177,6 +186,7 @@ describe('syncNow()', () => {
             synced: 2,
             skipped: 0,
             cancelled: 0,
+            syncedRemoteIds: ['c1', 'c2'],
             failed: [{ remoteId: 'c3', reason: 'SOURCE_UNAVAILABLE: x' }],
           }),
         ),
@@ -194,7 +204,14 @@ describe('syncNow()', () => {
     installServices({
       sync: {
         syncAll: vi.fn(async () =>
-          ok({ total: 5, synced: 2, skipped: 0, cancelled: 3, failed: [] }),
+          ok({
+            total: 5,
+            synced: 2,
+            skipped: 0,
+            cancelled: 3,
+            syncedRemoteIds: ['c1', 'c2'],
+            failed: [],
+          }),
         ),
       },
     });

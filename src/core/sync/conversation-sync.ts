@@ -58,6 +58,7 @@ export function createConversationSync(deps: ConversationSyncDeps): Conversation
 
     const failed: SyncFailure[] = [];
     const syncedUpdatedAt: number[] = [];
+    const syncedRemoteIds: string[] = [];
     let synced = 0;
     let cancelled = false;
 
@@ -76,6 +77,7 @@ export function createConversationSync(deps: ConversationSyncDeps): Conversation
         if (outcome.ok) {
           synced += 1;
           syncedUpdatedAt.push(summary.updatedAt);
+          syncedRemoteIds.push(summary.remoteId);
         } else {
           failed.push(outcome.failure);
         }
@@ -94,6 +96,7 @@ export function createConversationSync(deps: ConversationSyncDeps): Conversation
       failed,
       // 取消时未处理的会话数，供 UI 显示「已处理 N / M」。
       cancelled: cancelled ? Math.max(0, targets.length - processed) : 0,
+      syncedRemoteIds,
       durationMs: now() - startedAt,
     };
 
@@ -141,6 +144,7 @@ export function createConversationSync(deps: ConversationSyncDeps): Conversation
       synced: 1,
       skipped: 0,
       cancelled: 0,
+      syncedRemoteIds: [remoteId],
       failed: [],
       durationMs: now() - startedAt,
     });

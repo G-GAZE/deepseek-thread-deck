@@ -196,7 +196,7 @@ describe('启动快照命中与失效', () => {
       id: SNAPSHOT_ID,
       json: '{broken',
       builtAt: NOW,
-      docCount: 1,
+      docCount: 0,
       schemaVersion: DB_VERSION,
       minisearchVersion: MINISEARCH_VERSION,
       tokenizerVersion: TOKENIZER_VERSION,
@@ -209,23 +209,44 @@ describe('启动快照命中与失效', () => {
     expect(snapshot?.json).not.toBe('{broken');
   });
 
-  it('session count 与快照不一致时不重建索引（只记日志）', async () => {
+  it('会话数量变化但索引行与快照一致时，仍直接 loadJSON（不重建）', async () => {
+    const { db } = await setup({ conversations: 2 });
+    const first = await setupWithDb(db);
+    await first.index.search('游标');
+    const clearSpy = vi.spyOn(db.searchIndex, 'clear');
+
+    // 只删会话、不动索引行：docCount 仍匹配，属于「count 不一致只记日志」的场景
+    await db.conversation.delete('conv-0');
+
+    const second = await setupWithDb(db);
+    const result = await second.index.search('游标');
+
+    expect(result.ok).toBe(true);
+    expect(second.loaderCalls).toHaveLength(1);
+    expect(clearSpy).not.toHaveBeenCalled();
+  });
+
+  it('索引行数与快照 docCount 不一致时重建（同步后索引比快照新）', async () => {
     const { db } = await setup({ conversations: 1 });
     const first = await setupWithDb(db);
     await first.index.search('游标');
     const clearSpy = vi.spyOn(db.searchIndex, 'clear');
 
-    // 快照声称只有 0 个文档，与真实 1 个不一致
-    const snapshot = await readSnapshot(db);
-    if (snapshot === undefined) throw new Error('快照应已写入');
-    await db.searchIndexSnapshot.put({ ...snapshot, docCount: 0 });
+    // 模拟同步：写了一条新索引行但没刷新快照
+    await db.searchIndex.put({
+      id: 'conv-1:m-2',
+      convId: 'conv-1',
+      messageId: 'conv-1:m-2',
+      title: '会话 0 分词方案',
+      body: '新增内容：幂等性',
+      tokens: [],
+    });
 
     const second = await setupWithDb(db);
-    const result = await second.index.search('游标');
+    await second.index.search('幂等性');
 
-    expect(result.ok && result.data.length).toBeGreaterThan(0);
-    expect(second.loaderCalls).toHaveLength(1);
-    expect(clearSpy).not.toHaveBeenCalled();
+    expect(second.loaderCalls).toHaveLength(0);
+    expect(clearSpy).toHaveBeenCalled();
   });
 
   it('max(updatedAt) 比 builtAt 早超过 24h 时保守重建', async () => {

@@ -137,6 +137,14 @@ export function createSearchIndex(deps: SearchIndexDeps): SearchIndex {
       return ok(null);
     }
 
+    // 快照只记录「当时索引了多少行」。同步会增量写 searchIndex 行但不刷新快照，
+    // 行数对不上说明索引内容比快照新，必须重建，否则搜索会缺条目。
+    const indexedRows = await deps.db.searchIndex.count();
+    if (indexedRows !== record.docCount) {
+      await snapshots.remove();
+      return ok(null);
+    }
+
     const json = record.json;
     const builtAt = record.builtAt;
     // 内存：json / record 都是局部变量，loadJSON 返回后即出栈释放，

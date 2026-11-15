@@ -210,7 +210,20 @@ export const useSidebarStore = defineStore('deck-sidebar', () => {
       return;
     }
 
-    const { synced, failed, cancelled, skipped, total } = result.data;
+    const { synced, failed, cancelled, skipped, total, syncedRemoteIds } = result.data;
+
+    // 同步只写业务表；检索索引必须由编排层按会话增量刷新，
+    // 否则「同步完再搜」会一直为空（快照的 updatedAt 增量覆盖不到旧会话）。
+    let indexFailed = false;
+    for (const convId of syncedRemoteIds) {
+      const indexed = await services.search.upsertConversation(convId);
+      if (!indexed.ok) {
+        indexFailed = true;
+        break;
+      }
+    }
+    if (indexFailed) await services.search.rebuild();
+
     if (cancelled > 0) {
       syncMessage.value = `同步已取消（已处理 ${synced + failed.length} / ${total - skipped}）`;
     } else if (failed.length > 0) {

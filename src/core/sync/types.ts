@@ -60,6 +60,8 @@ export interface SyncSummary {
   failed: SyncFailure[];
   /** 取消时「未处理」的会话数；正常完成为 0。用于 UI「已处理 N / M」。 */
   cancelled: number;
+  /** 本轮成功写入的会话 remoteId，供编排层刷新检索索引。 */
+  syncedRemoteIds: string[];
   /** D3：便于把性能写进交付证据。 */
   durationMs?: number;
 }
