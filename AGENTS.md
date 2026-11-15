@@ -83,7 +83,7 @@ pnpm test:e2e
 
 交付前必须跑通：`pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm build`。若脚本尚未创建，Agent 应按上述命名补齐 `package.json`。
 
-## 6. 交付格式（每个任务必须输出，正文 <= 20 行）
+## 6. 交付格式（每个任务必须输出，正文 <= 15 行）
 
 ```txt
 状态: 完成 | 部分完成 | 失败
