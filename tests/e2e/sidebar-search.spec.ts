@@ -83,6 +83,11 @@ test.describe('主流程：同步 → 检索', () => {
       const panel = page.locator('aside[data-testid="deck-panel"]');
       await expect(panel).toBeVisible({ timeout: 20_000 });
 
+      // 无检索内容时，检索区应收缩到输入框高度，不留大片空白
+      const searchSection = panel.locator('.deck-section--search');
+      const idleBox = await searchSection.boundingBox();
+      expect(idleBox?.height ?? 999).toBeLessThan(170);
+
       // 真实同步链路：读页面 IndexedDB 缓存 → 写本地库
       await panel.getByRole('button', { name: '同步' }).click();
       await expect(panel.getByTestId('sync-message')).toContainText('同步完成', {
@@ -114,14 +119,11 @@ test.describe('主流程：同步 → 检索', () => {
         timeout: 20_000,
       });
 
-      await panel.getByText('游标推进要保守', { exact: false }).first().click();
-      await expect(panel.getByTestId('search-hint')).toContainText('复制', { timeout: 10_000 });
-
-      // 分裂器：向上拖动应让检索区变高（对话列表让出空间）
-      const searchSection = panel.locator('.deck-section--search');
-      const beforeBox = await searchSection.boundingBox();
+      // 有结果后检索区恢复可拖高度，分裂器向上拖应继续变高
+      const resultBox = await searchSection.boundingBox();
+      expect(resultBox?.height ?? 0).toBeGreaterThan((idleBox?.height ?? 0) + 40);
       const splitterBox = await panel.locator('.deck-splitter').boundingBox();
-      if (beforeBox === null || splitterBox === null) throw new Error('分裂器不可见');
+      if (resultBox === null || splitterBox === null) throw new Error('分裂器不可见');
       await page.mouse.move(
         splitterBox.x + splitterBox.width / 2,
         splitterBox.y + splitterBox.height / 2,
@@ -132,7 +134,7 @@ test.describe('主流程：同步 → 检索', () => {
       });
       await page.mouse.up();
       const afterBox = await searchSection.boundingBox();
-      expect(afterBox?.height ?? 0).toBeGreaterThan((beforeBox.height ?? 0) + 40);
+      expect(afterBox?.height ?? 0).toBeGreaterThan((resultBox?.height ?? 0) + 40);
 
       // 折叠态：只保留一个小圆按钮，不占满右侧整条（L3 修复的回归保护）
       await panel.getByTitle('收起线栈面板').click();
@@ -141,6 +143,14 @@ test.describe('主流程：同步 → 检索', () => {
       await expect(panel).toHaveCount(0);
       await fab.click();
       await expect(page.locator('aside[data-testid="deck-panel"]')).toBeVisible();
+
+      // 命中跳转第一版：点击结果打开 /a/chat/s/<会话 id>
+      await page
+        .locator('aside[data-testid="deck-panel"]')
+        .getByText('游标推进要保守', { exact: false })
+        .first()
+        .click();
+      await expect.poll(() => page.url(), { timeout: 10_000 }).toContain('/a/chat/s/conv-e2e-');
     } finally {
       await context.close();
     }

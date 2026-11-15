@@ -184,10 +184,10 @@
   min-height: 96px;
 }
 
-/* 检索区：高度由分裂器控制，内部滚动。 */
+/* 检索区：有结果时高度由分裂器控制；无结果时按内容收缩，不留空白。 */
 .deck-section--search {
   flex: 0 0 auto;
-  min-height: 120px;
+  min-height: 0;
   overflow: hidden;
 }
 

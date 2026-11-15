@@ -69,6 +69,11 @@ function endSplit(): void {
   splitting = false;
 }
 
+/** 检索区高度只在有结果（或搜索中）时生效；无结果时按内容收缩，不留空白。 */
+const searchStyle = computed(() =>
+  store.results.length > 0 || store.searching ? { height: `${searchHeight.value}px` } : {},
+);
+
 let timer: ReturnType<typeof setInterval> | null = null;
 
 onMounted(async () => {
@@ -156,7 +161,7 @@ onUnmounted(() => {
           @pointerup="endSplit"
           @pointercancel="endSplit"
         />
-        <SearchPanel :style="{ height: `${searchHeight}px` }" />
+        <SearchPanel :style="searchStyle" />
       </div>
     </div>
   </aside>

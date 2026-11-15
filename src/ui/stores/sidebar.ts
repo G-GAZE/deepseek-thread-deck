@@ -37,7 +37,6 @@ export const useSidebarStore = defineStore('deck-sidebar', () => {
   const syncAvailable = ref(false);
   const syncing = ref(false);
   const syncMessage = ref<string | null>(null);
-  const copiedConvId = ref<string | null>(null);
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -244,15 +243,18 @@ export const useSidebarStore = defineStore('deck-sidebar', () => {
     }
   }
 
-  async function copyConversationId(convId: string): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(convId);
-      copiedConvId.value = convId;
-      searchHint.value = `已复制会话 id：${convId}（页面跳转待适配）`;
-    } catch {
-      copiedConvId.value = null;
-      searchHint.value = `无法写入剪贴板，请手动复制：${convId}`;
+  /** 命中跳转第一版：直接打开会话 URL（消息级定位待 selectors）。 */
+  async function openConversation(convId: string): Promise<void> {
+    const url = conversationUrl(convId);
+    const target = globalThis.window;
+
+    if (target === undefined || typeof target.location?.assign !== 'function') {
+      searchHint.value = `无法跳转，会话 id：${convId}`;
+      return;
     }
+
+    searchHint.value = '正在打开会话…';
+    target.location.assign(url);
   }
 
   function toggleCollapsed(): void {
@@ -287,7 +289,6 @@ export const useSidebarStore = defineStore('deck-sidebar', () => {
     syncAvailable,
     syncing,
     syncMessage,
-    copiedConvId,
     init,
     refreshAll,
     refreshTree,
@@ -301,11 +302,16 @@ export const useSidebarStore = defineStore('deck-sidebar', () => {
     runSearch,
     syncNow,
     refreshProgress,
-    copyConversationId,
+    openConversation,
     toggleCollapsed,
     dispose,
   };
 });
+
+/** 会话跳转 URL 规则：`/a/chat/s/<会话 id>`（2026-11-15 真实页面采集）。 */
+export function conversationUrl(convId: string): string {
+  return `https://chat.deepseek.com/a/chat/s/${encodeURIComponent(convId)}`;
+}
 
 const ERROR_MESSAGES: Partial<Record<CoreError['code'], string>> = {
   DB_OPEN_FAILED: '本地数据库打开失败，同步与检索暂不可用',

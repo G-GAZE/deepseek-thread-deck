@@ -8,8 +8,8 @@ function onInput(event: Event): void {
   store.scheduleSearch(target.value);
 }
 
-async function copyId(convId: string): Promise<void> {
-  await store.copyConversationId(convId);
+function openConversation(convId: string): void {
+  void store.openConversation(convId);
 }
 </script>
 
@@ -44,10 +44,10 @@ async function copyId(convId: string): Promise<void> {
 
     <ul class="deck-list deck-list--scroll">
       <li v-for="hit in store.results" :key="`${hit.convId}:${hit.messageId ?? ''}`">
-        <button class="deck-hit" type="button" @click="copyId(hit.convId)">
+        <button class="deck-hit" type="button" @click="openConversation(hit.convId)">
           <span class="deck-hit__title">{{ hit.title }}</span>
           <span class="deck-hit__snippet">{{ hit.snippet }}</span>
-          <span class="deck-hit__action">复制会话 id</span>
+          <span class="deck-hit__action">打开会话</span>
         </button>
       </li>
     </ul>

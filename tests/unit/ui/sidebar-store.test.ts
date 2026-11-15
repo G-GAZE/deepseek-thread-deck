@@ -10,7 +10,7 @@ import { defaultFlagSnapshot } from '@/shared/feature-flags';
 import { err, ok } from '@/shared/result';
 
 import { resetDeckServices, setBootstrapError, setDeckServices } from '@/ui/services/deck-services';
-import { describeCoreError, useSidebarStore } from '@/ui/stores/sidebar';
+import { conversationUrl, describeCoreError, useSidebarStore } from '@/ui/stores/sidebar';
 
 const NOW = 1_800_000_000_000;
 
@@ -385,37 +385,33 @@ describe('search()', () => {
   });
 });
 
-describe('复制会话 id 与折叠', () => {
-  it('复制成功提示已复制并带上 id', async () => {
-    const writeText = vi.fn(async () => undefined);
-    vi.stubGlobal('navigator', { clipboard: { writeText } });
+describe('命中跳转与折叠', () => {
+  it('openConversation 打开会话 URL 并给出提示', async () => {
+    const assign = vi.fn();
+    vi.stubGlobal('window', { location: { assign } });
     installServices();
     const store = useSidebarStore();
     await store.init();
 
-    await store.copyConversationId('c1');
+    await store.openConversation('conv-1');
 
-    expect(writeText).toHaveBeenCalledWith('c1');
-    expect(store.copiedConvId).toBe('c1');
-    expect(store.searchHint).toContain('c1');
+    expect(assign).toHaveBeenCalledWith('https://chat.deepseek.com/a/chat/s/conv-1');
+    expect(store.searchHint).toBe('正在打开会话…');
   });
 
-  it('剪贴板不可用时提示手动复制', async () => {
-    vi.stubGlobal('navigator', {
-      clipboard: {
-        writeText: vi.fn(async () => {
-          throw new Error('denied');
-        }),
-      },
-    });
+  it('没有 window 时降级为展示会话 id', async () => {
+    vi.stubGlobal('window', undefined);
     installServices();
     const store = useSidebarStore();
     await store.init();
 
-    await store.copyConversationId('c1');
+    await store.openConversation('conv-1');
 
-    expect(store.copiedConvId).toBeNull();
-    expect(store.searchHint).toContain('请手动复制');
+    expect(store.searchHint).toContain('conv-1');
+  });
+
+  it('conversationUrl 对 id 做 URL 编码', () => {
+    expect(conversationUrl('a b')).toBe('https://chat.deepseek.com/a/chat/s/a%20b');
   });
 
   it('toggleCollapsed 切换折叠状态', () => {
