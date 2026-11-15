@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>DeepSeek mock page</title>
+  </head>
+  <body>
+    <main>
+      <h1>mock chat.deepseek.com</h1>
+      <p>e2e only: seeds DeepSeek's own message cache so the extension can sync it.</p>
+      <nav id="conv-links"></nav>
+    </main>
+
+    <script>
+      // 模拟 DeepSeek 自己的会话链接（SPA）：扩展点击它跳转时页面不重载。
+      (function mountLinks() {
+        var nav = document.getElementById('conv-links');
+        for (var i = 0; i < 40; i += 1) {
+          var link = document.createElement('a');
+          link.className = 'conv-link';
+          link.href = '/a/chat/s/conv-e2e-' + i;
+          link.textContent = '会话 ' + (i + 1);
+          link.style.display = 'none';
+          nav.appendChild(link);
+        }
+        document.addEventListener('click', function (event) {
+          var anchor = event.target.closest ? event.target.closest('a.conv-link') : null;
+          if (!anchor) return;
+          event.preventDefault();
+          history.pushState({}, '', anchor.getAttribute('href'));
+          document.body.dataset.conv = anchor.getAttribute('href');
+        });
+      })();
+      // 记录页面加载次数：整页跳转会让它 +1，SPA 跳转保持不变。
+      window.__deckLoads = Number(localStorage.getItem('__deckLoads') || '0') + 1;
+      localStorage.setItem('__deckLoads', String(window.__deckLoads));
+    </script>
+
+    <script>
+      // 按真实页面采集结果构造：库 deepseek-chat / v1，对象仓 history-message（out-of-line key）。
+      var DB_NAME = 'deepseek-chat';
+      var STORE = 'history-message';
+      var COUNT = 40;
+      var NOW_SECONDS = 1_794_636_911.125;
+
+      function buildRecord(index) {
+        var id = 'conv-e2e-' + index;
+        var base = NOW_SECONDS + index * 60;
+        return {
+          key: id,
+          version: 4,
+          frontendVersion: 'fv-6',
+          timestamp: base * 1000,
+          cacheResetAt: base,
+          data: {
+            chat_session: {
+              id: id,
+              title: '中文分词方案 ' + (index + 1),
+              title_type: 'SYSTEM',
+              updated_at: base + 220,
+              inserted_at: base,
+              is_empty: false,
+            },
+            chat_messages: [
+              {
+                message_id: 1,
+                role: 'USER',
+                inserted_at: base + 39,
+                fragments: [{ type: 'REQUEST', content: '游标该怎么推进？' }],
+              },
+              {
+                message_id: 2,
+                role: 'ASSISTANT',
+                inserted_at: base + 50,
+                fragments: [
+                  { type: 'THINK', content: '先确认幂等性' },
+                  { type: 'TOOL_SEARCH', content: '搜索到 26 个网页' },
+                  { type: 'RESPONSE', content: '游标推进要保守，失败后必须能重试。' },
+                ],
+              },
+            ],
+          },
+        };
+      }
+
+      function seed() {
+        return new Promise(function (resolve, reject) {
+          var request = indexedDB.open(DB_NAME, 1);
+          request.onupgradeneeded = function () {
+            request.result.createObjectStore(STORE);
+          };
+          request.onsuccess = function () {
+            var db = request.result;
+            var tx = db.transaction(STORE, 'readwrite');
+            var store = tx.objectStore(STORE);
+            for (var i = 0; i < COUNT; i += 1) {
+              var record = buildRecord(i);
+              store.put(record, record.key);
+            }
+            tx.oncomplete = function () {
+              db.close();
+              resolve();
+            };
+            tx.onerror = function () {
+              reject(tx.error);
+            };
+          };
+          request.onerror = function () {
+            reject(request.error);
+          };
+        });
+      }
+
+      seed()
+        .then(function () {
+          window.__deckSeedDone = true;
+        })
+        .catch(function (error) {
+          window.__deckSeedError = String(error);
+          window.__deckSeedDone = true;
+        });
+    </script>
+  </body>
+</html>
