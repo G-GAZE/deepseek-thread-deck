@@ -49,6 +49,7 @@ onUnmounted(() => {
       <header class="deck-header">
         <span class="deck-title">DeepSeek Thread Deck</span>
         <span class="deck-badge">{{ store.status === 'ready' ? 'P0 只读' : '初始化中' }}</span>
+        <button class="deck-icon" type="button" title="刷新" @click="store.refreshAll()">↻</button>
       </header>
 
       <p v-if="store.status === 'error'" class="deck-alert deck-alert--error">

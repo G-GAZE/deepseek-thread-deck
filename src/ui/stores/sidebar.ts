@@ -63,6 +63,14 @@ export const useSidebarStore = defineStore('deck-sidebar', () => {
     }
   }
 
+  /** 面板上的「刷新」：重新拉取项目树、会话与索引进度（同步完成/外部写入后使用）。 */
+  async function refreshAll(): Promise<void> {
+    if (!hasDeckServices()) return;
+    await refreshTree();
+    await refreshConversations();
+    await refreshProgress();
+  }
+
   async function refreshTree(): Promise<void> {
     const result = getDeckServices().projects.listTree();
     const tree = await result;
@@ -233,6 +241,7 @@ export const useSidebarStore = defineStore('deck-sidebar', () => {
     syncAvailable,
     copiedConvId,
     init,
+    refreshAll,
     refreshTree,
     refreshConversations,
     selectProject,

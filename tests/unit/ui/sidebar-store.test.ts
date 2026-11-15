@@ -120,6 +120,24 @@ describe('init()', () => {
   });
 });
 
+describe('refreshAll()', () => {
+  it('同时刷新项目树、会话与进度', async () => {
+    const fakes = installServices();
+    const store = useSidebarStore();
+    await store.init();
+
+    fakes.projects.listTree.mockClear();
+    fakes.projects.listConversations.mockClear();
+    fakes.progress.read.mockClear();
+
+    await store.refreshAll();
+
+    expect(fakes.projects.listTree).toHaveBeenCalledTimes(1);
+    expect(fakes.projects.listConversations).toHaveBeenCalledTimes(1);
+    expect(fakes.progress.read).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('项目操作', () => {
   it('selectProject 切换后拉取该项目会话', async () => {
     const fakes = installServices();
