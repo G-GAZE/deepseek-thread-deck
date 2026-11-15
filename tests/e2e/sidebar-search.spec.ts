@@ -4,12 +4,13 @@ import path from 'node:path';
 import { chromium, expect, test, type BrowserContext } from '@playwright/test';
 
 /**
- * 主流程 e2e（阶段 8）：在 mock 的 chat.deepseek.com 上验证
- * 「面板渲染 → 项目树计数 → 检索命中 → 复制会话 id」。
+ * 主流程 e2e（阶段 8 + 阶段 9）：在 mock 的 chat.deepseek.com 上验证
+ * 「真实页面缓存 → 同步 → 项目树 → 检索命中 → 复制会话 id」。
  *
- * 限制（已知，见 open-questions Q12/Q13）：
- * - 真实同步未接（RemoteSource 为占位），数据由 mock 页按同一 schema 预置；
- * - 真实页面跳转需要 selectors，当前落地为「复制会话 id + 待适配提示」。
+ * mock 页按真实采集结果写入 `deepseek-chat` / `history-message`，
+ * 扩展的只读数据源直接读它，因此这里跑的是真实同步链路（不是预置本地库）。
+ *
+ * 已知限制：真实页面跳转需要 selectors，当前落地为「复制会话 id + 待适配提示」。
  */
 const extensionPath = path.join(process.cwd(), '.output', 'chrome-mv3');
 const fixtureHtml = readFileSync(
@@ -28,10 +29,10 @@ function isMissingBrowser(error: unknown): boolean {
   return /Executable doesn't exist|is not found|not installed|no such file/i.test(message);
 }
 
-test.describe('主流程：面板 → 检索', () => {
+test.describe('主流程：同步 → 检索', () => {
   test.skip(!existsSync(extensionPath), '未找到 .output/chrome-mv3，请先运行 pnpm build');
 
-  test('侧边栏渲染、检索命中原会话并支持复制会话 id', async () => {
+  test('同步页面缓存后检索命中并复制会话 id', async () => {
     const channel = currentChannel();
     // Chrome 已移除 --load-extension，主流程 e2e 只在 Edge（同 Chromium 引擎）跑。
     test.skip(channel !== 'msedge', '主流程 e2e 仅在 msedge 执行');
@@ -82,23 +83,38 @@ test.describe('主流程：面板 → 检索', () => {
       const panel = page.locator('aside[data-testid="deck-panel"]');
       await expect(panel).toBeVisible({ timeout: 20_000 });
 
-      // mock 页在扩展建库后才写入数据，这里点「刷新」让面板重新拉取项目树与会话。
-      await panel.getByTitle('刷新').click();
+      // 真实同步链路：读页面 IndexedDB 缓存 → 写本地库
+      await panel.getByRole('button', { name: '同步' }).click();
+      await expect(panel.getByTestId('sync-message')).toContainText('同步完成', {
+        timeout: 30_000,
+      });
+
       const uncategorizedRow = panel.getByRole('button', { name: '未分类' });
       await expect(uncategorizedRow).toBeVisible();
       await uncategorizedRow.click();
-      await expect(panel.getByText('1 条')).toBeVisible({ timeout: 10_000 });
+      // 同步消息里也有「1 条」，这里只断言会话列表的计数元素。
+      await expect(panel.locator('.deck-section__count').first()).toHaveText('1 条', {
+        timeout: 10_000,
+      });
       await expect(panel.getByText('中文分词方案')).toBeVisible();
 
       const searchInput = panel.getByPlaceholder('搜索标题、正文、思维链');
-      await searchInput.fill('游标');
+      await searchInput.fill('重试');
 
       await expect(panel.getByText('游标推进要保守', { exact: false })).toBeVisible({
         timeout: 20_000,
       });
 
       await panel.getByText('游标推进要保守', { exact: false }).click();
-      await expect(panel.locator('.deck-hint')).toContainText('复制', { timeout: 10_000 });
+      await expect(panel.getByTestId('search-hint')).toContainText('复制', { timeout: 10_000 });
+
+      // 折叠态：只保留一个小圆按钮，不占满右侧整条（L3 修复的回归保护）
+      await panel.getByTitle('收起线栈面板').click();
+      const fab = page.locator('.deck-fab');
+      await expect(fab).toBeVisible();
+      await expect(panel).toHaveCount(0);
+      await fab.click();
+      await expect(page.locator('aside[data-testid="deck-panel"]')).toBeVisible();
     } finally {
       await context.close();
     }

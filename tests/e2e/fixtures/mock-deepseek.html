@@ -7,20 +7,70 @@
   <body>
     <main>
       <h1>mock chat.deepseek.com</h1>
-      <p>e2e only: waits for the extension to create its IndexedDB, then seeds rows.</p>
+      <p>e2e only: seeds DeepSeek's own message cache so the extension can sync it.</p>
     </main>
 
     <script>
-      // 扩展用 Dexie，实际 IndexedDB 版本号是「声明版本 × 10」（v2 → 20）。
-      // 因此这里**不指定版本**，先等扩展建库，再用当前版本写入数据。
-      var DB_NAME = 'deepseek-thread-deck';
-      var NOW = Date.UTC(2026, 10, 15, 4, 0, 0);
+      // 按真实页面采集结果构造：库 deepseek-chat / v1，对象仓 history-message（out-of-line key）。
+      var DB_NAME = 'deepseek-chat';
+      var STORE = 'history-message';
+      var SESSION_ID = 'conv-e2e-1';
+      var NOW_SECONDS = 1_794_636_911.125;
 
-      function openCurrentDb() {
+      function seed() {
         return new Promise(function (resolve, reject) {
-          var request = indexedDB.open(DB_NAME);
+          var request = indexedDB.open(DB_NAME, 1);
+          request.onupgradeneeded = function () {
+            request.result.createObjectStore(STORE);
+          };
           request.onsuccess = function () {
-            resolve(request.result);
+            var db = request.result;
+            var tx = db.transaction(STORE, 'readwrite');
+            tx.objectStore(STORE).put(
+              {
+                key: SESSION_ID,
+                version: 4,
+                frontendVersion: 'fv-6',
+                timestamp: NOW_SECONDS * 1000,
+                cacheResetAt: NOW_SECONDS,
+                data: {
+                  chat_session: {
+                    id: SESSION_ID,
+                    title: '中文分词方案',
+                    title_type: 'SYSTEM',
+                    updated_at: NOW_SECONDS + 220,
+                    inserted_at: NOW_SECONDS,
+                    is_empty: false,
+                  },
+                  chat_messages: [
+                    {
+                      message_id: 1,
+                      role: 'USER',
+                      inserted_at: NOW_SECONDS + 39,
+                      fragments: [{ type: 'REQUEST', content: '游标该怎么推进？' }],
+                    },
+                    {
+                      message_id: 2,
+                      role: 'ASSISTANT',
+                      inserted_at: NOW_SECONDS + 50,
+                      fragments: [
+                        { type: 'THINK', content: '先确认幂等性' },
+                        { type: 'TOOL_SEARCH', content: '搜索到 26 个网页' },
+                        { type: 'RESPONSE', content: '游标推进要保守，失败后必须能重试。' },
+                      ],
+                    },
+                  ],
+                },
+              },
+              SESSION_ID,
+            );
+            tx.oncomplete = function () {
+              db.close();
+              resolve();
+            };
+            tx.onerror = function () {
+              reject(tx.error);
+            };
           };
           request.onerror = function () {
             reject(request.error);
@@ -28,64 +78,14 @@
         });
       }
 
-      function putAll(db, storeName, rows) {
-        return new Promise(function (resolve, reject) {
-          var tx = db.transaction(storeName, 'readwrite');
-          var store = tx.objectStore(storeName);
-          rows.forEach(function (row) {
-            store.put(row);
-          });
-          tx.oncomplete = function () {
-            resolve();
-          };
-          tx.onerror = function () {
-            reject(tx.error);
-          };
+      seed()
+        .then(function () {
+          window.__deckSeedDone = true;
+        })
+        .catch(function (error) {
+          window.__deckSeedError = String(error);
+          window.__deckSeedDone = true;
         });
-      }
-
-      (async function () {
-        var ready = false;
-        for (var attempt = 0; attempt < 150 && !ready; attempt += 1) {
-          var databases = await indexedDB.databases();
-          ready = databases.some(function (entry) {
-            return entry.name === DB_NAME;
-          });
-          if (!ready)
-            await new Promise(function (resolve) {
-              setTimeout(resolve, 100);
-            });
-        }
-        if (!ready) throw new Error('extension did not create the database in time');
-
-        var db = await openCurrentDb();
-        await putAll(db, 'conversation', [
-          {
-            id: 'conv-1',
-            remoteId: 'conv-1',
-            title: '中文分词方案',
-            projectId: null,
-            tags: [],
-            createdAt: NOW,
-            updatedAt: NOW,
-          },
-        ]);
-        await putAll(db, 'message', [
-          {
-            id: 'conv-1:m-1',
-            convId: 'conv-1',
-            role: 'assistant',
-            content: '游标推进要保守，失败后必须能重试。',
-            order: 0,
-            attachmentMeta: [],
-          },
-        ]);
-        db.close();
-        window.__deckSeedDone = true;
-      })().catch(function (error) {
-        window.__deckSeedError = String(error);
-        window.__deckSeedDone = true;
-      });
     </script>
   </body>
 </html>
