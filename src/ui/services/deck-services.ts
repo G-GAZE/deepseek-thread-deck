@@ -7,6 +7,10 @@ import { createSearchLock } from '@/core/search/lock';
 import { createProgressStorage, type IndexProgressPort } from '@/core/search/progress';
 import { createSearchIndex } from '@/core/search/search-index';
 import type { SearchIndex } from '@/core/search/types';
+import { createConversationSync } from '@/core/sync/conversation-sync';
+import { createCursorStorage } from '@/core/sync/cursor';
+import { createStorageLock } from '@/core/sync/lock';
+import { createPageHistorySource } from '@/core/sync/page-history-source';
 import type { ConversationSync } from '@/core/sync/types';
 import { defaultFlagSnapshot, type FeatureFlagSnapshot } from '@/shared/feature-flags';
 import type { LocalStoragePort } from '@/shared/local-storage';
@@ -79,6 +83,14 @@ export async function createDeckServices(): Promise<CoreResult<DeckServices>> {
     progress,
   });
   const projects = createProjectStore({ db });
+  // 真实只读数据源：读页面自己的 IndexedDB 缓存（deepseek-chat / history-message）。
+  const sync = createConversationSync({
+    source: createPageHistorySource(),
+    db,
+    flags,
+    cursor: createCursorStorage(storage),
+    lock: createStorageLock(storage),
+  });
 
   return ok({
     db,
@@ -86,7 +98,7 @@ export async function createDeckServices(): Promise<CoreResult<DeckServices>> {
     projects,
     search,
     progress,
-    sync: null,
+    sync,
     close: () => {
       db.close();
     },

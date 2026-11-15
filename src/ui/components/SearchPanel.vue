@@ -28,8 +28,12 @@ async function copyId(convId: string): Promise<void> {
       @input="onInput"
     />
 
-    <p v-if="store.searchHint" class="deck-hint">{{ store.searchHint }}</p>
-    <p v-else-if="!store.fullTextEnabled" class="deck-hint">全文检索已关闭，当前仅搜索标题</p>
+    <p v-if="store.searchHint" class="deck-hint" data-testid="search-hint">
+      {{ store.searchHint }}
+    </p>
+    <p v-else-if="!store.fullTextEnabled" class="deck-hint" data-testid="search-hint">
+      全文检索已关闭，当前仅搜索标题
+    </p>
 
     <p
       v-if="store.query.trim() !== '' && store.results.length === 0 && !store.searching"

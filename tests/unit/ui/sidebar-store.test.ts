@@ -25,10 +25,13 @@ interface Fakes {
   };
   search: { search: ReturnType<typeof vi.fn>; upsertConversation: ReturnType<typeof vi.fn> };
   progress: { read: ReturnType<typeof vi.fn> };
+  sync: { syncAll: ReturnType<typeof vi.fn> } | null;
   close: ReturnType<typeof vi.fn>;
 }
 
-function installServices(overrides: { sync?: ConversationSync | null } = {}): Fakes {
+function installServices(
+  options: { sync?: { syncAll: ReturnType<typeof vi.fn> } | null } = {},
+): Fakes {
   const projects: Fakes['projects'] = {
     listTree: vi.fn(async () =>
       ok({
@@ -52,6 +55,14 @@ function installServices(overrides: { sync?: ConversationSync | null } = {}): Fa
     read: vi.fn(async () => ok({ phase: 'done', processed: 5, total: 5, updatedAt: NOW })),
   };
   const close = vi.fn();
+  const sync =
+    options.sync === undefined
+      ? {
+          syncAll: vi.fn(async () =>
+            ok({ total: 0, synced: 0, skipped: 0, cancelled: 0, failed: [] }),
+          ),
+        }
+      : options.sync;
 
   setDeckServices({
     db: {} as unknown as DeckDatabase,
@@ -59,11 +70,11 @@ function installServices(overrides: { sync?: ConversationSync | null } = {}): Fa
     projects: projects as unknown as ProjectStore,
     search: search as unknown as SearchIndex,
     progress: progress as unknown as IndexProgressPort,
-    sync: overrides.sync ?? null,
+    sync: sync as unknown as ConversationSync | null,
     close,
   });
 
-  return { projects, search, progress, close };
+  return { projects, search, progress, sync, close };
 }
 
 beforeEach(() => {
@@ -111,7 +122,7 @@ describe('init()', () => {
   });
 
   it('没有 sync 服务时 syncAvailable 为 false', async () => {
-    installServices();
+    installServices({ sync: null });
     const store = useSidebarStore();
 
     await store.init();
@@ -135,6 +146,89 @@ describe('refreshAll()', () => {
     expect(fakes.projects.listTree).toHaveBeenCalledTimes(1);
     expect(fakes.projects.listConversations).toHaveBeenCalledTimes(1);
     expect(fakes.progress.read).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('syncNow()', () => {
+  it('成功后显示同步完成并刷新面板', async () => {
+    const fakes = installServices({
+      sync: {
+        syncAll: vi.fn(async () =>
+          ok({ total: 3, synced: 3, skipped: 0, cancelled: 0, failed: [] }),
+        ),
+      },
+    });
+    const store = useSidebarStore();
+    await store.init();
+    fakes.projects.listTree.mockClear();
+
+    await store.syncNow();
+
+    expect(store.syncMessage).toBe('同步完成（3 条）');
+    expect(fakes.projects.listTree).toHaveBeenCalledTimes(1);
+  });
+
+  it('部分失败时显示失败条数', async () => {
+    installServices({
+      sync: {
+        syncAll: vi.fn(async () =>
+          ok({
+            total: 3,
+            synced: 2,
+            skipped: 0,
+            cancelled: 0,
+            failed: [{ remoteId: 'c3', reason: 'SOURCE_UNAVAILABLE: x' }],
+          }),
+        ),
+      },
+    });
+    const store = useSidebarStore();
+    await store.init();
+
+    await store.syncNow();
+
+    expect(store.syncMessage).toBe('同步完成（1 条失败）');
+  });
+
+  it('取消时显示已处理进度', async () => {
+    installServices({
+      sync: {
+        syncAll: vi.fn(async () =>
+          ok({ total: 5, synced: 2, skipped: 0, cancelled: 3, failed: [] }),
+        ),
+      },
+    });
+    const store = useSidebarStore();
+    await store.init();
+
+    await store.syncNow();
+
+    expect(store.syncMessage).toBe('同步已取消（已处理 2 / 5）');
+  });
+
+  it('失败时映射为可读文案', async () => {
+    installServices({
+      sync: {
+        syncAll: vi.fn(async () => err('SOURCE_UNAVAILABLE', '页面缓存不可用')),
+      },
+    });
+    const store = useSidebarStore();
+    await store.init();
+
+    await store.syncNow();
+
+    expect(store.errorMessage).toBe('页面数据不可用，请稍后重试');
+    expect(store.syncMessage).toBe('页面数据不可用，请稍后重试');
+  });
+
+  it('没有同步服务时给出明确提示', async () => {
+    installServices({ sync: null });
+    const store = useSidebarStore();
+    await store.init();
+
+    await store.syncNow();
+
+    expect(store.syncMessage).toBe('同步不可用：等待页面适配');
   });
 });
 

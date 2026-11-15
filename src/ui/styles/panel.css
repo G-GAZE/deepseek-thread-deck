@@ -31,6 +31,32 @@
   background: #f9fafb;
 }
 
+/* 折叠态：右侧中部的小圆按钮，可上下拖动，不占满整条右侧。 */
+.deck-fab {
+  position: fixed;
+  right: 8px;
+  z-index: 2147483000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #4d6bfe;
+  font-size: 14px;
+  line-height: 1;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 18%);
+  cursor: grab;
+  touch-action: none;
+}
+
+.deck-fab:active {
+  cursor: grabbing;
+}
+
 .deck-toggle {
   position: absolute;
   top: 8px;
@@ -178,6 +204,16 @@
   color: #ffffff;
   font: inherit;
   cursor: pointer;
+}
+
+.deck-button--compact {
+  padding: 2px 6px;
+  font-size: 11px;
+}
+
+.deck-button:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .deck-list {

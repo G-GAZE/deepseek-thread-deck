@@ -35,6 +35,8 @@ export const useSidebarStore = defineStore('deck-sidebar', () => {
   const progress = ref<IndexProgress | null>(null);
   const fullTextEnabled = ref(true);
   const syncAvailable = ref(false);
+  const syncing = ref(false);
+  const syncMessage = ref<string | null>(null);
   const copiedConvId = ref<string | null>(null);
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -188,6 +190,37 @@ export const useSidebarStore = defineStore('deck-sidebar', () => {
     searchHint.value = fullTextEnabled.value ? null : '全文检索已关闭，当前仅搜索标题';
   }
 
+  /** 只读同步：从页面 IndexedDB 缓存同步到本地库，成功后刷新面板。 */
+  async function syncNow(): Promise<void> {
+    if (!hasDeckServices()) return;
+    const services = getDeckServices();
+    if (services.sync === null) {
+      syncMessage.value = '同步不可用：等待页面适配';
+      return;
+    }
+
+    syncing.value = true;
+    syncMessage.value = null;
+    const result = await services.sync.syncAll();
+    syncing.value = false;
+
+    if (!result.ok) {
+      setError(result.error);
+      syncMessage.value = describeCoreError(result.error);
+      return;
+    }
+
+    const { synced, failed, cancelled, skipped, total } = result.data;
+    if (cancelled > 0) {
+      syncMessage.value = `同步已取消（已处理 ${synced + failed.length} / ${total - skipped}）`;
+    } else if (failed.length > 0) {
+      syncMessage.value = `同步完成（${failed.length} 条失败）`;
+    } else {
+      syncMessage.value = `同步完成（${synced} 条）`;
+    }
+    await refreshAll();
+  }
+
   async function refreshProgress(): Promise<void> {
     if (!hasDeckServices()) return;
 
@@ -239,6 +272,8 @@ export const useSidebarStore = defineStore('deck-sidebar', () => {
     progress,
     fullTextEnabled,
     syncAvailable,
+    syncing,
+    syncMessage,
     copiedConvId,
     init,
     refreshAll,
@@ -251,6 +286,7 @@ export const useSidebarStore = defineStore('deck-sidebar', () => {
     assignConversation,
     scheduleSearch,
     runSearch,
+    syncNow,
     refreshProgress,
     copyConversationId,
     toggleCollapsed,
