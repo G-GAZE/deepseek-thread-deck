@@ -92,20 +92,29 @@ test.describe('主流程：同步 → 检索', () => {
       const uncategorizedRow = panel.getByRole('button', { name: '未分类' });
       await expect(uncategorizedRow).toBeVisible();
       await uncategorizedRow.click();
-      // 同步消息里也有「1 条」，这里只断言会话列表的计数元素。
-      await expect(panel.locator('.deck-section__count').first()).toHaveText('1 条', {
+      // 同步消息里也有「40 条」，这里只断言会话列表的计数元素。
+      await expect(panel.locator('.deck-section__count').first()).toHaveText('40 条', {
         timeout: 10_000,
       });
-      await expect(panel.getByText('中文分词方案')).toBeVisible();
+
+      // 回归：40 条会话时「新建」表单必须可点，不能被会话列表遮挡
+      await panel.getByRole('button', { name: '＋ 新建' }).click();
+      const projectName = panel.getByPlaceholder('项目名称');
+      await expect(projectName).toBeVisible();
+      await projectName.fill('回归项目');
+      await panel.getByRole('button', { name: '创建' }).click();
+      await expect(panel.getByRole('button', { name: '回归项目' })).toBeVisible({
+        timeout: 10_000,
+      });
 
       const searchInput = panel.getByPlaceholder('搜索标题、正文、思维链');
       await searchInput.fill('重试');
 
-      await expect(panel.getByText('游标推进要保守', { exact: false })).toBeVisible({
+      await expect(panel.getByText('游标推进要保守', { exact: false }).first()).toBeVisible({
         timeout: 20_000,
       });
 
-      await panel.getByText('游标推进要保守', { exact: false }).click();
+      await panel.getByText('游标推进要保守', { exact: false }).first().click();
       await expect(panel.getByTestId('search-hint')).toContainText('复制', { timeout: 10_000 });
 
       // 折叠态：只保留一个小圆按钮，不占满右侧整条（L3 修复的回归保护）

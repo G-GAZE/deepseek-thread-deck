@@ -26,7 +26,7 @@ async function assign(convId: string, event: Event): Promise<void> {
 </script>
 
 <template>
-  <section class="deck-section">
+  <section class="deck-section deck-section--conversations">
     <div class="deck-section__head">
       <h2 class="deck-section__title">{{ title }}</h2>
       <span class="deck-section__count">{{ store.conversations.length }} 条</span>

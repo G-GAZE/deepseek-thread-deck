@@ -57,7 +57,7 @@ async function confirmDelete(projectId: string): Promise<void> {
 </script>
 
 <template>
-  <section class="deck-section">
+  <section class="deck-section deck-section--tree">
     <div class="deck-section__head">
       <h2 class="deck-section__title">项目</h2>
       <button class="deck-link" type="button" @click="startCreate">＋ 新建</button>

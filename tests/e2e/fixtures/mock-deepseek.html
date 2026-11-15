@@ -14,8 +14,48 @@
       // 按真实页面采集结果构造：库 deepseek-chat / v1，对象仓 history-message（out-of-line key）。
       var DB_NAME = 'deepseek-chat';
       var STORE = 'history-message';
-      var SESSION_ID = 'conv-e2e-1';
+      var COUNT = 40;
       var NOW_SECONDS = 1_794_636_911.125;
+
+      function buildRecord(index) {
+        var id = 'conv-e2e-' + index;
+        var base = NOW_SECONDS + index * 60;
+        return {
+          key: id,
+          version: 4,
+          frontendVersion: 'fv-6',
+          timestamp: base * 1000,
+          cacheResetAt: base,
+          data: {
+            chat_session: {
+              id: id,
+              title: '中文分词方案 ' + (index + 1),
+              title_type: 'SYSTEM',
+              updated_at: base + 220,
+              inserted_at: base,
+              is_empty: false,
+            },
+            chat_messages: [
+              {
+                message_id: 1,
+                role: 'USER',
+                inserted_at: base + 39,
+                fragments: [{ type: 'REQUEST', content: '游标该怎么推进？' }],
+              },
+              {
+                message_id: 2,
+                role: 'ASSISTANT',
+                inserted_at: base + 50,
+                fragments: [
+                  { type: 'THINK', content: '先确认幂等性' },
+                  { type: 'TOOL_SEARCH', content: '搜索到 26 个网页' },
+                  { type: 'RESPONSE', content: '游标推进要保守，失败后必须能重试。' },
+                ],
+              },
+            ],
+          },
+        };
+      }
 
       function seed() {
         return new Promise(function (resolve, reject) {
@@ -26,44 +66,11 @@
           request.onsuccess = function () {
             var db = request.result;
             var tx = db.transaction(STORE, 'readwrite');
-            tx.objectStore(STORE).put(
-              {
-                key: SESSION_ID,
-                version: 4,
-                frontendVersion: 'fv-6',
-                timestamp: NOW_SECONDS * 1000,
-                cacheResetAt: NOW_SECONDS,
-                data: {
-                  chat_session: {
-                    id: SESSION_ID,
-                    title: '中文分词方案',
-                    title_type: 'SYSTEM',
-                    updated_at: NOW_SECONDS + 220,
-                    inserted_at: NOW_SECONDS,
-                    is_empty: false,
-                  },
-                  chat_messages: [
-                    {
-                      message_id: 1,
-                      role: 'USER',
-                      inserted_at: NOW_SECONDS + 39,
-                      fragments: [{ type: 'REQUEST', content: '游标该怎么推进？' }],
-                    },
-                    {
-                      message_id: 2,
-                      role: 'ASSISTANT',
-                      inserted_at: NOW_SECONDS + 50,
-                      fragments: [
-                        { type: 'THINK', content: '先确认幂等性' },
-                        { type: 'TOOL_SEARCH', content: '搜索到 26 个网页' },
-                        { type: 'RESPONSE', content: '游标推进要保守，失败后必须能重试。' },
-                      ],
-                    },
-                  ],
-                },
-              },
-              SESSION_ID,
-            );
+            var store = tx.objectStore(STORE);
+            for (var i = 0; i < COUNT; i += 1) {
+              var record = buildRecord(i);
+              store.put(record, record.key);
+            }
             tx.oncomplete = function () {
               db.close();
               resolve();

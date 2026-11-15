@@ -14,7 +14,7 @@ async function copyId(convId: string): Promise<void> {
 </script>
 
 <template>
-  <section class="deck-section deck-section--grow">
+  <section class="deck-section deck-section--search">
     <div class="deck-section__head">
       <h2 class="deck-section__title">检索</h2>
       <span v-if="store.searching" class="deck-section__count">搜索中…</span>
