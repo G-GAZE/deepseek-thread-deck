@@ -399,6 +399,35 @@ describe('命中跳转与折叠', () => {
     expect(store.searchHint).toBe('正在打开会话…');
   });
 
+  it('页面存在会话链接时点击它（保持 SPA，不整页跳转）', async () => {
+    const assign = vi.fn();
+    const click = vi.fn();
+    const link = { getAttribute: () => '/a/chat/s/conv-1', click };
+    vi.stubGlobal('window', { location: { assign } });
+    vi.stubGlobal('document', { querySelectorAll: () => [link] });
+    installServices();
+    const store = useSidebarStore();
+    await store.init();
+
+    await store.openConversation('conv-1');
+
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it('页面没有会话链接时退回整页跳转', async () => {
+    const assign = vi.fn();
+    vi.stubGlobal('window', { location: { assign } });
+    vi.stubGlobal('document', { querySelectorAll: () => [] });
+    installServices();
+    const store = useSidebarStore();
+    await store.init();
+
+    await store.openConversation('conv-1');
+
+    expect(assign).toHaveBeenCalledWith('https://chat.deepseek.com/a/chat/s/conv-1');
+  });
+
   it('没有 window 时降级为展示会话 id', async () => {
     vi.stubGlobal('window', undefined);
     installServices();

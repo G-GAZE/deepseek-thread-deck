@@ -243,7 +243,7 @@ export const useSidebarStore = defineStore('deck-sidebar', () => {
     }
   }
 
-  /** 命中跳转第一版：直接打开会话 URL（消息级定位待 selectors）。 */
+  /** 命中跳转第一版：优先点页面自有的会话链接（保持 SPA，不重载页面）。 */
   async function openConversation(convId: string): Promise<void> {
     const url = conversationUrl(convId);
     const target = globalThis.window;
@@ -253,7 +253,16 @@ export const useSidebarStore = defineStore('deck-sidebar', () => {
       return;
     }
 
+    const anchor = findConversationAnchor(convId);
     searchHint.value = '正在打开会话…';
+
+    if (anchor !== null) {
+      // 交给 DeepSeek 自己的路由处理：面板与页面状态都不会被重置。
+      anchor.click();
+      return;
+    }
+
+    // 页面没有该链接时退回整页跳转（面板会重新初始化）。
     target.location.assign(url);
   }
 
@@ -311,6 +320,17 @@ export const useSidebarStore = defineStore('deck-sidebar', () => {
 /** 会话跳转 URL 规则：`/a/chat/s/<会话 id>`（2026-11-15 真实页面采集）。 */
 export function conversationUrl(convId: string): string {
   return `https://chat.deepseek.com/a/chat/s/${encodeURIComponent(convId)}`;
+}
+
+/** 在页面里找该会话自己的链接；找不到就返回 null（调用方退回整页跳转）。 */
+function findConversationAnchor(convId: string): HTMLAnchorElement | null {
+  if (typeof document === 'undefined') return null;
+
+  const needle = `/a/chat/s/${convId}`;
+  for (const link of Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href]'))) {
+    if (link.getAttribute('href')?.includes(needle) === true) return link;
+  }
+  return null;
 }
 
 const ERROR_MESSAGES: Partial<Record<CoreError['code'], string>> = {

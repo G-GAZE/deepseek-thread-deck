@@ -144,13 +144,16 @@ test.describe('主流程：同步 → 检索', () => {
       await fab.click();
       await expect(page.locator('aside[data-testid="deck-panel"]')).toBeVisible();
 
-      // 命中跳转第一版：点击结果打开 /a/chat/s/<会话 id>
+      // 命中跳转第一版：优先点击页面自有的会话链接，保持 SPA（面板不重新加载）
       await page
         .locator('aside[data-testid="deck-panel"]')
         .getByText('游标推进要保守', { exact: false })
         .first()
         .click();
       await expect.poll(() => page.url(), { timeout: 10_000 }).toContain('/a/chat/s/conv-e2e-');
+      const loads = await page.evaluate(() => Number(localStorage.getItem('__deckLoads') ?? '0'));
+      expect(loads).toBe(1);
+      await expect(page.locator('aside[data-testid="deck-panel"]')).toBeVisible();
     } finally {
       await context.close();
     }

@@ -8,7 +8,33 @@
     <main>
       <h1>mock chat.deepseek.com</h1>
       <p>e2e only: seeds DeepSeek's own message cache so the extension can sync it.</p>
+      <nav id="conv-links"></nav>
     </main>
+
+    <script>
+      // 模拟 DeepSeek 自己的会话链接（SPA）：扩展点击它跳转时页面不重载。
+      (function mountLinks() {
+        var nav = document.getElementById('conv-links');
+        for (var i = 0; i < 40; i += 1) {
+          var link = document.createElement('a');
+          link.className = 'conv-link';
+          link.href = '/a/chat/s/conv-e2e-' + i;
+          link.textContent = '会话 ' + (i + 1);
+          link.style.display = 'none';
+          nav.appendChild(link);
+        }
+        document.addEventListener('click', function (event) {
+          var anchor = event.target.closest ? event.target.closest('a.conv-link') : null;
+          if (!anchor) return;
+          event.preventDefault();
+          history.pushState({}, '', anchor.getAttribute('href'));
+          document.body.dataset.conv = anchor.getAttribute('href');
+        });
+      })();
+      // 记录页面加载次数：整页跳转会让它 +1，SPA 跳转保持不变。
+      window.__deckLoads = Number(localStorage.getItem('__deckLoads') || '0') + 1;
+      localStorage.setItem('__deckLoads', String(window.__deckLoads));
+    </script>
 
     <script>
       // 按真实页面采集结果构造：库 deepseek-chat / v1，对象仓 history-message（out-of-line key）。
